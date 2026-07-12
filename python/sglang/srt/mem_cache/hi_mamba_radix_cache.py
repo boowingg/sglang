@@ -1744,13 +1744,15 @@ class HiMambaRadixCache(MambaRadixCache):
         new_input_tokens = new_input_tokens[:prefetch_length]
         if not self.enable_storage:
             return
-        self.cache_controller.record_storage_stat("prefetch_attempts")
-        self.cache_controller.record_storage_stat(
-            "prefetch_attempt_candidate_tokens", prefetch_length
-        )
+        stats = {
+            "prefetch_attempts": 1,
+            "prefetch_attempt_candidate_tokens": prefetch_length,
+        }
         if prefetch_length < self.prefetch_threshold:
-            self.cache_controller.record_storage_stat("prefetch_below_threshold")
+            stats["prefetch_below_threshold"] = 1
+            self.cache_controller.record_storage_stats(stats)
             return
+        self.cache_controller.record_storage_stats(stats)
         if self.cache_controller.prefetch_rate_limited():
             return
 

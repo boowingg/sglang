@@ -209,25 +209,32 @@ class HiCachePeriodicStats:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._window_values = defaultdict(float)
         self._total_values = defaultdict(float)
+        self._last_snapshot_values = {}
 
     def add(self, name: str, value: float = 1) -> None:
         with self._lock:
-            self._window_values[name] += value
             self._total_values[name] += value
+
+    def add_many(self, values: dict[str, float]) -> None:
+        with self._lock:
+            for name, value in values.items():
+                self._total_values[name] += value
 
     def snapshot_and_reset(self) -> tuple[dict[str, float], dict[str, float]]:
         with self._lock:
-            window_values = dict(self._window_values)
             total_values = dict(self._total_values)
-            self._window_values.clear()
+            window_values = {
+                name: value - self._last_snapshot_values.get(name, 0)
+                for name, value in total_values.items()
+            }
+            self._last_snapshot_values = dict(total_values)
         return window_values, total_values
 
     def reset(self) -> None:
         with self._lock:
-            self._window_values.clear()
             self._total_values.clear()
+            self._last_snapshot_values.clear()
 
 
 class HiCacheController:
@@ -936,13 +943,20 @@ class HiCacheController:
         operation = PrefetchOperation(
             request_id, host_indices, new_input_tokens, last_hash, prefix_keys
         )
-        self.record_storage_stat("prefetch_requests")
-        self.record_storage_stat("prefetch_candidate_tokens", len(new_input_tokens))
+        self.record_storage_stats(
+            {
+                "prefetch_requests": 1,
+                "prefetch_candidate_tokens": len(new_input_tokens),
+            }
+        )
         self.prefetch_queue.put(operation)
         return operation
 
     def record_storage_stat(self, name: str, value: float = 1) -> None:
         self._periodic_stats.add(name, value)
+
+    def record_storage_stats(self, values: dict[str, float]) -> None:
+        self._periodic_stats.add_many(values)
 
     def reserve_prefetch_tokens(
         self,
