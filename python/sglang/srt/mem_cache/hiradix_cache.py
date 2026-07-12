@@ -176,6 +176,8 @@ class HiRadixCache(RadixCache):
                 model_name=server_args.served_model_name,
                 storage_backend_extra_config=extra_config,
                 enable_storage_metrics=self.enable_storage_metrics,
+                prefetch_capacity_ratio=server_args.hicache_storage_prefetch_capacity_ratio,
+                storage_metrics_log_interval=server_args.hicache_storage_metrics_log_interval,
             )
         self._apply_storage_runtime_config(
             storage_backend=server_args.hicache_storage_backend,
@@ -524,7 +526,7 @@ class HiRadixCache(RadixCache):
         try:
             for req_id, info in list(self.ongoing_prefetch.items()):
                 try:
-                    last_host_node, token_ids, host_indices, _operation = info
+                    last_host_node, _token_ids, host_indices, operation = info
                 except Exception:
                     # Unexpected shape; just drop it.
                     self.ongoing_prefetch.pop(req_id, None)
@@ -546,9 +548,7 @@ class HiRadixCache(RadixCache):
                     )
 
                 try:
-                    cc.prefetch_tokens_occupied -= len(token_ids)
-                    if cc.prefetch_tokens_occupied < 0:
-                        cc.prefetch_tokens_occupied = 0
+                    cc.release_prefetch_tokens(operation)
                 except Exception:
                     pass
 
@@ -558,7 +558,8 @@ class HiRadixCache(RadixCache):
 
         # Force release leftover backup ops: drop host protection on nodes.
         try:
-            for ack_id, node in list(self.ongoing_backup.items()):
+            for ack_id, entry in list(self.ongoing_backup.items()):
+                node = entry[0] if isinstance(entry, tuple) else entry
                 try:
                     node.release_host()
                 except Exception:
@@ -605,18 +606,53 @@ class HiRadixCache(RadixCache):
             for req_id in _drain_queue(cc.prefetch_revoke_queue, n_revoke):
                 info = self.ongoing_prefetch.pop(req_id, None)
                 if info is not None:
-                    last_host_node, token_ids, _, _ = info
+                    last_host_node, _token_ids, _, operation = info
                     last_host_node.release_host()
-                    cc.prefetch_tokens_occupied -= len(token_ids)
-                    if cc.prefetch_tokens_occupied < 0:
-                        cc.prefetch_tokens_occupied = 0
+                    cc.release_prefetch_tokens(operation)
 
         def _drain_backup():
-            for operation in _drain_queue(cc.ack_backup_queue, n_backup):
+            operations = list(_drain_queue(cc.ack_backup_queue, n_backup))
+            if operations and log_metrics:
+                completed = torch.tensor(
+                    [operation.completed_tokens for operation in operations],
+                    dtype=torch.int,
+                )
+                reduce_op = (
+                    torch.distributed.ReduceOp.MAX
+                    if cc.storage_config.is_mla_model
+                    else torch.distributed.ReduceOp.MIN
+                )
+                self._all_reduce_attn_groups(completed, reduce_op)
+                for operation, synced_tokens in zip(operations, completed.tolist()):
+                    operation.completed_tokens = int(synced_tokens)
+
+            for operation in operations:
                 ack_id = operation.id
                 entry = self.ongoing_backup.pop(ack_id, None)
                 if entry is not None:
-                    entry.release_host()
+                    node, backup_len = entry
+                    fully_backed = True
+                    for transfer in getattr(operation, "pool_transfers", None) or []:
+                        expected_pages = len(transfer.keys or [])
+                        completed_pages = (
+                            operation.pool_storage_result.extra_pool_hit_pages.get(
+                                transfer.name, 0
+                            )
+                        )
+                        if completed_pages < expected_pages:
+                            fully_backed = False
+                            cc.record_storage_stat("storage_aux_incomplete")
+                            break
+                    if fully_backed:
+                        self._mark_storage_backed(
+                            node, backup_len, operation.completed_tokens
+                        )
+                    node.release_host()
+                    self._update_host_leaf_status(node)
+                    if fully_backed:
+                        cc.record_storage_stat(
+                            "storage_acked_tokens", operation.completed_tokens
+                        )
                 if log_metrics and self.enable_storage_metrics:
                     self.storage_metrics_collector.log_backuped_tokens(
                         operation.completed_tokens
@@ -793,6 +829,16 @@ class HiRadixCache(RadixCache):
         if not write_back and (
             node.parent != self.root_node and not node.parent.backuped
         ):
+            # L3-prefetch pressure may have reclaimed the parent's redundant
+            # L2 copy while its immutable L1 copy remained. Rebuild that parent
+            # first; a later hit can then back up this child without creating a
+            # gap in the host radix tree.
+            if (
+                node.parent.storage_backed
+                and not node.parent.evicted
+                and node.parent.write_through_pending_id is None
+            ):
+                self.write_backup(node.parent)
             return 0
 
         host_indices = self.cache_controller.write(
@@ -857,7 +903,9 @@ class HiRadixCache(RadixCache):
                 node.write_through_pending_id = None
             # DMA confirmed -- block is now on host.
             self._record_store_event(node, medium=StorageMedium.CPU)
-        if self.enable_storage:
+        if self.enable_storage and not all(
+            node.storage_backed for node in publish_nodes
+        ):
             self.write_backup_storage(lock_node, backup_len)
         if release_lock:
             self.dec_lock_ref(lock_node)
@@ -886,8 +934,35 @@ class HiRadixCache(RadixCache):
         operation_id = self.cache_controller.write_storage(
             host_value, key, hash_value, prefix_keys, **self._get_extra_pools()
         )
-        self.ongoing_backup[operation_id] = node
+        self.ongoing_backup[operation_id] = (node, len(key))
         node.protect_host()
+
+    def _mark_storage_backed(
+        self, node: TreeNode, backup_len: int, completed_tokens: int
+    ) -> None:
+        """Mark only complete nodes covered by an acknowledged L3 write."""
+        chain, accumulated = [], 0
+        current = node
+        while current is not self.root_node and accumulated < backup_len:
+            chain.append(current)
+            accumulated += len(current.key)
+            current = current.parent
+        if accumulated != backup_len:
+            logger.warning(
+                "Cannot mark L3 backup for node %d: expected %d tokens, found %d",
+                node.id,
+                backup_len,
+                accumulated,
+            )
+            return
+
+        remaining = completed_tokens
+        for current in reversed(chain):
+            if remaining < len(current.key):
+                break
+            current.storage_backed = True
+            remaining -= len(current.key)
+            self._update_host_leaf_status(current)
 
     def _concat_split_chain(self, node: TreeNode, backup_len: int):
         """Recover enqueue-time key/hash/host by walking the split chain."""
@@ -986,7 +1061,10 @@ class HiRadixCache(RadixCache):
             _, finish_event, ack_list = self.cache_controller.ack_load_queue.pop(0)
             finish_event.synchronize()
             for ack_id in ack_list:
-                end_node = self.ongoing_load_back.pop(ack_id)
+                end_node, protected_host_nodes = self.ongoing_load_back.pop(ack_id)
+                for node in protected_host_nodes:
+                    node.release_host()
+                    self._update_host_leaf_status(node)
                 self.dec_lock_ref(end_node)
             finish_count -= 1
 
@@ -1046,9 +1124,19 @@ class HiRadixCache(RadixCache):
         return DecLockRefResult(delta=delta)
 
     def _update_host_leaf_status(self, node: TreeNode):
-        if not node.evicted or node.lock_ref > 0:
+        if not node.backuped or node.host_ref_counter > 0:
             if node in self.evictable_host_leaves:
                 self.evictable_host_leaves.remove(node)
+            return
+
+        host_only_evictable = node.evicted and node.lock_ref == 0
+        storage_copy_evictable = (
+            not node.evicted
+            and node.storage_backed
+            and node.write_through_pending_id is None
+        )
+        if not host_only_evictable and not storage_copy_evictable:
+            self.evictable_host_leaves.discard(node)
             return
 
         for child in node.children.values():
@@ -1204,7 +1292,7 @@ class HiRadixCache(RadixCache):
         self._update_host_leaf_status(root.parent)
         return freed_device
 
-    def evict_host(self, num_tokens: int):
+    def evict_host(self, num_tokens: int, allow_storage_backed_gpu_copy: bool = False):
         leaves = list(self.evictable_host_leaves)
         eviction_heap = [
             (self.eviction_strategy.get_priority(node), node) for node in leaves
@@ -1216,11 +1304,27 @@ class HiRadixCache(RadixCache):
             _, x = heapq.heappop(eviction_heap)
             if x == self.root_node:
                 break
-            # only evict the host value of evicted nodes
-            if not x.evicted:
+            if x.host_ref_counter > 0:
                 continue
 
-            if x.host_ref_counter > 0:
+            if not x.evicted:
+                if (
+                    not allow_storage_backed_gpu_copy
+                    or not x.storage_backed
+                    or x.write_through_pending_id is not None
+                ):
+                    continue
+                # The GPU copy remains authoritative and L3 has acknowledged the
+                # full node, so only its resident L2 copy needs to be reclaimed.
+                self._record_remove_event(x, medium=StorageMedium.CPU)
+                host_value = x.host_value
+                x.host_value = None
+                num_evicted += self.cache_controller.evict_host(host_value)
+                self.evictable_host_leaves.discard(x)
+                self._update_host_leaf_status(x.parent)
+                self.cache_controller.record_storage_stat(
+                    "storage_backed_l2_evicted_tokens", len(host_value)
+                )
                 continue
 
             # Block deleted entirely (GPU already evicted, now CPU freed) --
@@ -1298,9 +1402,10 @@ class HiRadixCache(RadixCache):
             )
             return None
 
-        for n in nodes_to_load:
-            n.release_host()
-        self.ongoing_load_back[last_hit_node.id] = last_hit_node
+        self.ongoing_load_back[last_hit_node.id] = (
+            last_hit_node,
+            nodes_to_load,
+        )
         offset = 0
         for node in nodes_to_load:
             node.value = device_indices[offset : offset + len(node.host_value)].clone()
@@ -1403,6 +1508,9 @@ class HiRadixCache(RadixCache):
         self.loading_check()
         if self.enable_storage:
             self.drain_storage_control_queues()
+            self.cache_controller.maybe_log_storage_summary(
+                evictable_host_nodes=len(self.evictable_host_leaves)
+            )
         if self.enable_storage_metrics:
             self.storage_metrics_collector.log_storage_metrics(
                 self.cache_controller.storage_backend.get_stats()
@@ -1492,8 +1600,20 @@ class HiRadixCache(RadixCache):
             req_id
         ]
 
+        if operation.host_indices is None and operation.query_done.is_set():
+            self._start_discovered_prefetch(req_id)
+            last_host_node, prefetch_key, host_indices, operation = (
+                self.ongoing_prefetch[req_id]
+            )
+
         if operation.host_indices is None:
-            # prefetch has not been issued due to insufficient host memory
+            if not self.can_terminate_prefetch(operation):
+                return False
+            operation.mark_terminate()
+            self.cache_controller.release_prefetch_tokens(operation)
+            last_host_node.release_host()
+            del self.ongoing_prefetch[req_id]
+            self.prefetch_loaded_tokens_by_reqid[req_id] = 0
             return True
 
         if not self.can_terminate_prefetch(operation):
@@ -1526,11 +1646,14 @@ class HiRadixCache(RadixCache):
         )
         last_host_node.release_host()
         del self.ongoing_prefetch[req_id]
-        self.cache_controller.prefetch_tokens_occupied -= len(prefetch_key)
+        self.cache_controller.release_prefetch_tokens(operation)
 
         # Track tokens actually loaded from storage for this request (L3 hits)
         loaded_from_storage = min_completed_tokens - matched_length
         self.prefetch_loaded_tokens_by_reqid[req_id] = loaded_from_storage
+        self.cache_controller.record_storage_stat(
+            "prefetch_effective_hit_tokens", loaded_from_storage
+        )
 
         if self.enable_storage_metrics:
             self.storage_metrics_collector.log_prefetched_tokens(loaded_from_storage)
@@ -1542,8 +1665,6 @@ class HiRadixCache(RadixCache):
             return
 
         _, _, _, operation = self.ongoing_prefetch[req_id]
-        if operation.host_indices is None:
-            return
         operation.mark_terminate()
 
     def pop_prefetch_loaded_tokens(self, req_id: str) -> int:
@@ -1611,28 +1732,9 @@ class HiRadixCache(RadixCache):
             return
 
         last_host_node.protect_host()
-        host_indices = self.cache_controller.mem_pool_host.alloc(prefetch_length)
-        if host_indices is None:
-            self.evict_host(prefetch_length)
-            host_indices = self.cache_controller.mem_pool_host.alloc(prefetch_length)
-        if host_indices is None:
-            available_size = self.cache_controller.mem_pool_host.available_size()
-            prefetch_length = available_size - (available_size % self.page_size)
-            if prefetch_length >= self.prefetch_threshold:
-                prefetch_key = prefetch_key[:prefetch_length]
-                host_indices = self.cache_controller.mem_pool_host.alloc(
-                    prefetch_length
-                )
-                if host_indices is None:
-                    last_host_node.release_host()
-                    return
-            else:
-                last_host_node.release_host()
-                # no sufficient host memory for prefetch
-                return
         operation = self.cache_controller.prefetch(
             req_id,
-            host_indices,
+            None,
             prefetch_key,
             last_hash,
             prefix_keys,
@@ -1641,10 +1743,78 @@ class HiRadixCache(RadixCache):
         self.ongoing_prefetch[req_id] = (
             last_host_node,
             prefetch_key,
+            None,
+            operation,
+        )
+
+    def _start_discovered_prefetch(self, req_id: str) -> bool:
+        """Allocate only the continuous L3 hit discovered by the query thread."""
+        last_host_node, prefetch_key, _, operation = self.ongoing_prefetch[req_id]
+        if not operation.query_done.is_set() or operation.reserved_tokens <= 0:
+            return False
+        if operation.io_started:
+            return True
+
+        requested = operation.reserved_tokens
+        host_indices = self.cache_controller.mem_pool_host.alloc(requested)
+        if host_indices is None:
+            self.cache_controller.record_storage_stat(
+                "prefetch_alloc_failed_before_evict"
+            )
+            shortage = max(
+                0,
+                requested - self.cache_controller.mem_pool_host.available_size(),
+            )
+            self.evict_host(shortage, allow_storage_backed_gpu_copy=True)
+            host_indices = self.cache_controller.mem_pool_host.alloc(requested)
+
+        allocated = requested
+        if host_indices is None:
+            self.cache_controller.record_storage_stat(
+                "prefetch_alloc_failed_after_evict"
+            )
+            available = self.cache_controller.mem_pool_host.available_size()
+            allocated = available - (available % self.page_size)
+            allocated = min(allocated, requested)
+            if allocated >= self.prefetch_threshold:
+                host_indices = self.cache_controller.mem_pool_host.alloc(allocated)
+
+        local_allocated = allocated if host_indices is not None else 0
+        allocated_tensor = torch.tensor(local_allocated, dtype=torch.int)
+        self._all_reduce_attn_groups(allocated_tensor, torch.distributed.ReduceOp.MIN)
+        allocated = int(allocated_tensor.item())
+
+        if host_indices is not None and allocated < local_allocated:
+            self.cache_controller.mem_pool_host.free(host_indices[allocated:])
+            host_indices = host_indices[:allocated]
+
+        if host_indices is None or allocated < self.prefetch_threshold:
+            if host_indices is not None:
+                self.cache_controller.mem_pool_host.free(host_indices)
+            self.cache_controller.record_storage_stat(
+                "prefetch_dropped_tokens", requested
+            )
+            self.cache_controller.release_prefetch_tokens(operation)
+            operation.mark_terminate()
+            return False
+
+        if allocated < requested:
+            operation.hash_value = operation.hash_value[: allocated // self.page_size]
+            operation.storage_hit_tokens = allocated
+            self.cache_controller.record_storage_stat(
+                "prefetch_capacity_trimmed_tokens", requested - allocated
+            )
+
+        effective_key = prefetch_key[:allocated]
+        self.cache_controller.commit_prefetch_allocation(operation, allocated)
+        self.cache_controller.start_prefetch_io(operation, host_indices)
+        self.ongoing_prefetch[req_id] = (
+            last_host_node,
+            effective_key,
             host_indices,
             operation,
         )
-        self.cache_controller.prefetch_tokens_occupied += len(prefetch_key)
+        return True
 
     def _insert_helper_host(
         self, node: TreeNode, key: RadixKey, host_value, hash_value
@@ -1667,7 +1837,10 @@ class HiRadixCache(RadixCache):
 
             if prefix_len < len(node.key):
                 new_node = self._split_node(node.key, node, prefix_len)
+                new_node.storage_backed = True
                 node = new_node
+            else:
+                node.storage_backed = True
 
             if len(key):
                 child_key = key.child_key(self.page_size)
@@ -1679,6 +1852,7 @@ class HiRadixCache(RadixCache):
             new_node.value = None
             new_node.host_value = host_value.clone()
             new_node.hash_value = hash_value
+            new_node.storage_backed = True
             node.children[child_key] = new_node
             self._update_host_leaf_status(new_node)
             self._update_leaf_status(node)
@@ -1723,6 +1897,7 @@ class HiRadixCache(RadixCache):
         new_node.lock_ref = child.lock_ref
         new_node.key = child.key[:split_len]
         new_node.hit_count = child.hit_count
+        new_node.storage_backed = child.storage_backed
 
         # split value and host value if exists
         if child.evicted:
@@ -1841,6 +2016,11 @@ class HiRadixCache(RadixCache):
             rid
         ]
         if operation.host_indices is None:
+            operation.mark_terminate()
+            if operation.query_done.is_set():
+                self.cache_controller.release_prefetch_tokens(operation)
+                last_host_node.release_host()
+                del self.ongoing_prefetch[rid]
             return
 
         completed_tokens, _ = self.cache_controller.terminate_prefetch(operation)
@@ -1848,4 +2028,4 @@ class HiRadixCache(RadixCache):
         last_host_node.release_host()
         del self.ongoing_prefetch[rid]
         self.cache_controller.append_host_mem_release(host_indices[:completed_tokens])
-        self.cache_controller.prefetch_tokens_occupied -= len(prefetch_key)
+        self.cache_controller.release_prefetch_tokens(operation)

@@ -2069,6 +2069,9 @@ class UnifiedRadixCache(KVCacheEventMixin, BasePrefixCache):
 
         loaded_from_storage = min_completed_tokens - insert_result.prefix_len
         self.prefetch_loaded_tokens_by_reqid[req_id] = loaded_from_storage
+        self.cache_controller.record_storage_stat(
+            "prefetch_effective_hit_tokens", loaded_from_storage
+        )
         logger.info(
             "HiCache prefetch success req=%s completed_local=%d completed_synced=%d matched=%d loaded=%d tail_release=%d occupied=%d",
             req_id,
@@ -2467,6 +2470,9 @@ class UnifiedRadixCache(KVCacheEventMixin, BasePrefixCache):
         self.loading_check()
         if self.enable_storage:
             self.drain_storage_control_queues()
+            self.cache_controller.maybe_log_storage_summary(
+                evictable_host_nodes=len(self.evictable_host_leaves)
+            )
         if self.enable_storage_metrics and self.storage_metrics_collector is not None:
             self.storage_metrics_collector.log_storage_metrics(
                 self.cache_controller.storage_backend.get_stats()

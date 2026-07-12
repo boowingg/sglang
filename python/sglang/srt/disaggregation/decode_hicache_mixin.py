@@ -72,7 +72,15 @@ class DecodeHiCachePreallocMixin:
         last_host_node = None
         if self.scheduler.enable_decode_hicache:
             last_host_node = result.last_host_node
-            if last_host_node.backuped or last_host_node is self.tree_cache.root_node:
+            has_host_gap = (
+                result.last_device_node is not last_host_node
+                and not getattr(result.last_device_node, "backuped", False)
+            )
+            if has_host_gap:
+                cache_controller = getattr(self.tree_cache, "cache_controller", None)
+                if cache_controller is not None:
+                    cache_controller.record_storage_stat("prefetch_skipped_host_gap")
+            elif last_host_node.backuped or last_host_node is self.tree_cache.root_node:
                 matched_len = l1_prefix_len + l2_host_hit_length
                 suffix_tokens = req.origin_input_ids[matched_len:]
                 last_hash = last_host_node.get_last_hash_value()

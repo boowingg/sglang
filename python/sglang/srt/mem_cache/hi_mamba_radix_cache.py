@@ -466,6 +466,9 @@ class HiMambaRadixCache(MambaRadixCache):
 
         if self.enable_storage:
             self.drain_storage_control_queues()
+            self.cache_controller.maybe_log_storage_summary(
+                evictable_host_nodes=len(self.evictable_full_host_leaves)
+            )
         if self.enable_storage_metrics:
             self.storage_metrics_collector.log_storage_metrics(
                 self.cache_controller.storage_backend.get_stats()
@@ -1871,6 +1874,9 @@ class HiMambaRadixCache(MambaRadixCache):
 
         loaded_from_storage = min_completed_tokens - matched_length
         self.prefetch_loaded_tokens_by_reqid[req_id] = loaded_from_storage
+        self.cache_controller.record_storage_stat(
+            "prefetch_effective_hit_tokens", loaded_from_storage
+        )
 
         if self.enable_storage_metrics:
             self.storage_metrics_collector.log_prefetched_tokens(loaded_from_storage)

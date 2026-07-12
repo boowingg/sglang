@@ -159,6 +159,8 @@ def build_kv_only_stack(
         storage_backend_extra_config=storage_backend_extra_config,
         transfer_layer_num=transfer_layer_num,
         enable_storage_metrics=enable_storage_metrics,
+        prefetch_capacity_ratio=server_args.hicache_storage_prefetch_capacity_ratio,
+        storage_metrics_log_interval=server_args.hicache_storage_metrics_log_interval,
     )
     return host_pool_group, cache_controller
 
@@ -241,6 +243,8 @@ def build_hybrid_swa_stack(
         storage_backend_extra_config=storage_backend_extra_config,
         transfer_layer_num=transfer_layer_num,
         enable_storage_metrics=enable_storage_metrics,
+        prefetch_capacity_ratio=server_args.hicache_storage_prefetch_capacity_ratio,
+        storage_metrics_log_interval=server_args.hicache_storage_metrics_log_interval,
     )
     return host_pool_group, cache_controller
 
@@ -513,6 +517,8 @@ def build_deepseek_v4_hicache_stack(
         storage_backend_extra_config=storage_backend_extra_config,
         transfer_layer_num=transfer_layer_num,
         enable_storage_metrics=enable_storage_metrics,
+        prefetch_capacity_ratio=server_args.hicache_storage_prefetch_capacity_ratio,
+        storage_metrics_log_interval=server_args.hicache_storage_metrics_log_interval,
     )
     return host_pool_group, cache_controller
 
@@ -594,6 +600,8 @@ def build_hybrid_mamba_stack(
         storage_backend_extra_config=storage_backend_extra_config,
         transfer_layer_num=transfer_layer_num,
         enable_storage_metrics=enable_storage_metrics,
+        prefetch_capacity_ratio=server_args.hicache_storage_prefetch_capacity_ratio,
+        storage_metrics_log_interval=server_args.hicache_storage_metrics_log_interval,
     )
     return host_pool_group, cache_controller
 
@@ -664,6 +672,8 @@ def build_anchor_sidecar_stack(
         storage_backend_extra_config=storage_backend_extra_config,
         transfer_layer_num=transfer_layer_num,
         enable_storage_metrics=enable_storage_metrics,
+        prefetch_capacity_ratio=server_args.hicache_storage_prefetch_capacity_ratio,
+        storage_metrics_log_interval=server_args.hicache_storage_metrics_log_interval,
     )
     return host_pool_group, cache_controller
 
@@ -1332,6 +1342,8 @@ def build_minimax_sparse_hicache_stack(
         pp_group=params.pp_cache_group,
         transfer_layer_num=transfer_layer_num,
         enable_storage_metrics=enable_storage_metrics,
+        prefetch_capacity_ratio=server_args.hicache_storage_prefetch_capacity_ratio,
+        storage_metrics_log_interval=server_args.hicache_storage_metrics_log_interval,
     )
     return host_pool_group, cache_controller
 

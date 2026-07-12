@@ -234,6 +234,8 @@ class TreeNode:
         # store the host indices of KV cache
         self.host_value: Optional[torch.Tensor] = None
         self.write_through_pending_id: Optional[int] = None
+        # True only after every page in this node has been acknowledged by L3.
+        self.storage_backed = False
         # store hash values of each pages
         self.hash_value: Optional[List[str]] = None
         # priority for priority-aware eviction

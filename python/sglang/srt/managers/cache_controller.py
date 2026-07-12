@@ -16,6 +16,7 @@ limitations under the License.
 import logging
 import threading
 import time
+from collections import defaultdict
 from queue import Empty, Queue
 from typing import TYPE_CHECKING, List, NamedTuple, Optional
 
@@ -171,7 +172,7 @@ class PrefetchOperation(StorageOperation):
     def __init__(
         self,
         request_id: str,
-        host_indices: torch.Tensor,
+        host_indices: Optional[torch.Tensor],
         token_ids: List[int],
         last_hash: Optional[str] = None,
         prefix_keys: Optional[List[str]] = None,
@@ -181,6 +182,10 @@ class PrefetchOperation(StorageOperation):
         self._lock = threading.Lock()
         self._terminated_flag = False
         self.start_time = time.monotonic()
+        self.query_done = threading.Event()
+        self.storage_hit_tokens = 0
+        self.reserved_tokens = 0
+        self.io_started = False
 
         super().__init__(host_indices, token_ids, last_hash, prefix_keys=prefix_keys)
 
@@ -197,6 +202,24 @@ class PrefetchOperation(StorageOperation):
 
     def is_terminated(self) -> bool:
         return self._terminated_flag
+
+
+class HiCachePeriodicStats:
+    """Small thread-safe accumulator used by the periodic summary log."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._values = defaultdict(float)
+
+    def add(self, name: str, value: float = 1) -> None:
+        with self._lock:
+            self._values[name] += value
+
+    def snapshot_and_reset(self) -> dict[str, float]:
+        with self._lock:
+            values = dict(self._values)
+            self._values.clear()
+        return values
 
 
 class HiCacheController:
@@ -218,6 +241,8 @@ class HiCacheController:
         model_name: Optional[str] = None,
         storage_backend_extra_config: Optional[dict] = None,
         enable_storage_metrics: bool = False,
+        prefetch_capacity_ratio: float = 0.5,
+        storage_metrics_log_interval: float = 10.0,
     ):
         self.tp_group = tp_group
         self.attn_cp_group = attn_cp_group
@@ -239,6 +264,17 @@ class HiCacheController:
         self.storage_backend = None
         self.storage_backend_type = None
         self.enable_storage_metrics = enable_storage_metrics
+        if not 0 < prefetch_capacity_ratio <= 1:
+            raise ValueError("prefetch_capacity_ratio must be in (0, 1].")
+        if storage_metrics_log_interval < 0:
+            raise ValueError("storage_metrics_log_interval must be non-negative.")
+        self.prefetch_capacity_ratio = prefetch_capacity_ratio
+        self.storage_metrics_log_interval = storage_metrics_log_interval
+        self._periodic_stats = HiCachePeriodicStats()
+        self._last_storage_metrics_log_time = time.monotonic()
+        self._prefetch_budget_lock = threading.Lock()
+        self.prefetch_tokens_reserved = 0
+        self.prefetch_tokens_occupied = 0
 
         # Draft KV pool support (best-effort piggyback on target L2/L3 ops).
         self.has_draft = False
@@ -456,10 +492,13 @@ class HiCacheController:
             self.enable_storage = True
             # todo: threshold policy for prefetching
             self.prefetch_threshold = max(prefetch_threshold, self.page_size)
-            # Budget speculative prefetch at half the host pool, leaving the rest for the write-back staging path.
-            self.prefetch_capacity_limit = int(0.5 * self.mem_pool_host.size)
-            # tracking the number of tokens locked in prefetching, updated by the main scheduler thread
+            # Limit both discovered reservations and active reads. Resident L2
+            # entries may borrow unused capacity and are reclaimed on demand.
+            self.prefetch_capacity_limit = int(
+                self.prefetch_capacity_ratio * self.mem_pool_host.size
+            )
             self.prefetch_tokens_occupied = 0
+            self.prefetch_tokens_reserved = 0
 
             # Use dedicated gloo groups so storage prefetch sync is isolated
             # from other collectives and consistent across CPxTP participants.
@@ -632,6 +671,7 @@ class HiCacheController:
             self.ack_backup_queue.queue.clear()
             self.host_mem_release_queue.queue.clear()
             self.prefetch_tokens_occupied = 0
+            self.prefetch_tokens_reserved = 0
 
         self.storage_stop_event.clear()
 
@@ -654,6 +694,11 @@ class HiCacheController:
         """
         Back up KV caches from device memory to host memory.
         """
+        if self.enable_storage and not self.resident_allocation_available(
+            len(device_indices)
+        ):
+            self.record_storage_stat("resident_allocation_deferred")
+            return None
         host_indices = self.mem_pool_host.alloc(len(device_indices))
         if host_indices is None:
             return None
@@ -869,7 +914,7 @@ class HiCacheController:
     def prefetch(
         self,
         request_id: str,
-        host_indices: torch.Tensor,
+        host_indices: Optional[torch.Tensor],
         new_input_tokens: List[int],
         last_hash: Optional[str] = None,
         prefix_keys: Optional[List[str]] = None,
@@ -880,8 +925,139 @@ class HiCacheController:
         operation = PrefetchOperation(
             request_id, host_indices, new_input_tokens, last_hash, prefix_keys
         )
+        self.record_storage_stat("prefetch_requests")
+        self.record_storage_stat("prefetch_candidate_tokens", len(new_input_tokens))
         self.prefetch_queue.put(operation)
         return operation
+
+    def record_storage_stat(self, name: str, value: float = 1) -> None:
+        self._periodic_stats.add(name, value)
+
+    def reserve_prefetch_tokens(
+        self,
+        requested_tokens: int,
+        operation: Optional[PrefetchOperation] = None,
+    ) -> int:
+        """Reserve page-aligned L2 budget after L3 existence discovery."""
+        with self._prefetch_budget_lock:
+            available = max(
+                0, self.prefetch_capacity_limit - self.prefetch_tokens_occupied
+            )
+            accepted = min(requested_tokens, available)
+            accepted -= accepted % self.page_size
+            self.prefetch_tokens_occupied += accepted
+            self.prefetch_tokens_reserved += accepted
+            if operation is not None:
+                operation.reserved_tokens = accepted
+        if accepted < requested_tokens:
+            self.record_storage_stat(
+                "prefetch_capacity_trimmed_tokens", requested_tokens - accepted
+            )
+        return accepted
+
+    def commit_prefetch_allocation(
+        self, operation: PrefetchOperation, tokens: int
+    ) -> None:
+        """Convert an unallocated reservation into active staging occupancy."""
+        with self._prefetch_budget_lock:
+            original = operation.reserved_tokens
+            committed = min(tokens, original)
+            self.prefetch_tokens_reserved = max(
+                0, self.prefetch_tokens_reserved - original
+            )
+            self.prefetch_tokens_occupied = max(
+                0, self.prefetch_tokens_occupied - (original - committed)
+            )
+            operation.reserved_tokens = committed
+        self.record_storage_stat("prefetch_allocated_tokens", committed)
+
+    def release_prefetch_tokens(self, operation: PrefetchOperation) -> None:
+        with self._prefetch_budget_lock:
+            tokens = operation.reserved_tokens
+            if tokens <= 0:
+                return
+            self.prefetch_tokens_occupied = max(
+                0, self.prefetch_tokens_occupied - tokens
+            )
+            unallocated = tokens if operation.host_indices is None else 0
+            self.prefetch_tokens_reserved = max(
+                0, self.prefetch_tokens_reserved - unallocated
+            )
+            operation.reserved_tokens = 0
+
+    def resident_allocation_available(self, requested_tokens: int) -> bool:
+        """Keep discovered, not-yet-allocated prefetch reservations available."""
+        with self._prefetch_budget_lock:
+            reserved = self.prefetch_tokens_reserved
+        return requested_tokens <= max(
+            0, self.mem_pool_host.available_size() - reserved
+        )
+
+    def maybe_log_storage_summary(self, evictable_host_nodes: int = 0) -> None:
+        interval = self.storage_metrics_log_interval
+        now = time.monotonic()
+        if interval <= 0 or now - self._last_storage_metrics_log_time < interval:
+            return
+        self._last_storage_metrics_log_time = now
+
+        # One summary per TP/PP/CP replica avoids multiplying identical logs.
+        config = getattr(self, "storage_config", None)
+        if config is not None and (
+            config.tp_rank != 0
+            or config.pp_rank != 0
+            or self.get_attn_cp_rank_and_size()[0] != 0
+        ):
+            self._periodic_stats.snapshot_and_reset()
+            return
+
+        stats = self._periodic_stats.snapshot_and_reset()
+        total = self.mem_pool_host.size
+        available = self.mem_pool_host.available_size()
+        size_per_token = getattr(self.mem_pool_host, "size_per_token", 0)
+
+        def to_gb(tokens):
+            return tokens * size_per_token / 1e9
+
+        query_count = stats.get("storage_query_count", 0)
+        read_count = stats.get("storage_read_count", 0)
+        logger.info(
+            "HiCache summary: l2_used=%.2fGB/%.2fGB l2_available=%.2fGB "
+            "prefetch_occupied=%d/%d prefetch_reserved=%d "
+            "requests=%d candidate_tokens=%d backend_hit_tokens=%d "
+            "allocated_tokens=%d loaded_tokens=%d effective_hit_tokens=%d "
+            "rate_limited=%d alloc_failed_before_evict=%d "
+            "alloc_failed_after_evict=%d resident_deferred=%d "
+            "trimmed_tokens=%d dropped_tokens=%d query_avg_ms=%.2f "
+            "read_avg_ms=%.2f evictable_host_nodes=%d host_release_queue=%d "
+            "host_gap_skips=%d storage_aux_incomplete=%d storage_acked_tokens=%d "
+            "storage_backed_l2_evicted_tokens=%d",
+            to_gb(total - available),
+            to_gb(total),
+            to_gb(available),
+            self.prefetch_tokens_occupied,
+            self.prefetch_capacity_limit,
+            self.prefetch_tokens_reserved,
+            int(stats.get("prefetch_requests", 0)),
+            int(stats.get("prefetch_candidate_tokens", 0)),
+            int(stats.get("storage_backend_hit_tokens", 0)),
+            int(stats.get("prefetch_allocated_tokens", 0)),
+            int(stats.get("prefetch_loaded_tokens", 0)),
+            int(stats.get("prefetch_effective_hit_tokens", 0)),
+            int(stats.get("prefetch_rate_limited", 0)),
+            int(stats.get("prefetch_alloc_failed_before_evict", 0)),
+            int(stats.get("prefetch_alloc_failed_after_evict", 0)),
+            int(stats.get("resident_allocation_deferred", 0)),
+            int(stats.get("prefetch_capacity_trimmed_tokens", 0)),
+            int(stats.get("prefetch_dropped_tokens", 0)),
+            stats.get("storage_query_seconds", 0) * 1000 / max(1, query_count),
+            stats.get("storage_read_seconds", 0) * 1000 / max(1, read_count),
+            evictable_host_nodes,
+            self.host_mem_release_queue.qsize(),
+            int(stats.get("prefetch_skipped_host_gap", 0)),
+            int(stats.get("storage_aux_incomplete", 0)),
+            int(stats.get("storage_acked_tokens", 0)),
+            int(stats.get("storage_backed_l2_evicted_tokens", 0)),
+        )
 
     def terminate_prefetch(self, operation):
         operation.mark_terminate()
@@ -972,7 +1148,15 @@ class HiCacheController:
                 operation = self.prefetch_buffer.get(block=True, timeout=1)
                 if operation is None:
                     continue
+                read_start = time.monotonic()
                 self._page_transfer(operation)
+                self.record_storage_stat(
+                    "storage_read_seconds", time.monotonic() - read_start
+                )
+                self.record_storage_stat("storage_read_count")
+                self.record_storage_stat(
+                    "prefetch_loaded_tokens", operation.completed_tokens
+                )
                 # operation terminated by controller, release pre-allocated memory
                 self.append_host_mem_release(
                     operation.host_indices[operation.completed_tokens :]
@@ -985,7 +1169,10 @@ class HiCacheController:
         Rate limit the prefetching operations to avoid overwhelming the storage backend.
         """
         # cancel prefetch if too much memory is occupied
-        if self.prefetch_tokens_occupied >= self.prefetch_capacity_limit:
+        with self._prefetch_budget_lock:
+            rate_limited = self.prefetch_tokens_occupied >= self.prefetch_capacity_limit
+        if rate_limited:
+            self.record_storage_stat("prefetch_rate_limited")
             return True
         # todo: more sophisticated rate limiting based on storage backend performance
         return False
@@ -1012,6 +1199,7 @@ class HiCacheController:
             if prefix_keys and len(prefix_keys) > 0:
                 prefix_keys += batch_hashes
 
+        self.record_storage_stat("storage_backend_hit_tokens", storage_query_count)
         return hash_value, storage_query_count
 
     def prefetch_thread_func(self):
@@ -1028,7 +1216,12 @@ class HiCacheController:
                 operation = self.prefetch_queue.get(block=True, timeout=1)
                 if operation is None:
                     continue
+                query_start = time.monotonic()
                 hash_value, storage_hit_count = self._storage_hit_query(operation)
+                self.record_storage_stat(
+                    "storage_query_seconds", time.monotonic() - query_start
+                )
+                self.record_storage_stat("storage_query_count")
                 storage_hit_count_tensor = torch.tensor(
                     storage_hit_count, dtype=torch.int
                 )
@@ -1036,6 +1229,40 @@ class HiCacheController:
                     storage_hit_count_tensor, torch.distributed.ReduceOp.MIN
                 )
                 storage_hit_count = storage_hit_count_tensor.item()
+
+                # HiRadixCache uses query-first mode and supplies no host buffer
+                # until the continuous L3 hit length is known. Allocation and
+                # radix-tree eviction stay on the scheduler thread.
+                if operation.host_indices is None:
+                    if operation.is_terminated():
+                        operation.query_done.set()
+                        self.prefetch_revoke_queue.put(operation.request_id)
+                        continue
+
+                    if storage_hit_count >= self.prefetch_threshold:
+                        storage_hit_count = self.reserve_prefetch_tokens(
+                            storage_hit_count, operation
+                        )
+                    if storage_hit_count < self.prefetch_threshold:
+                        self.release_prefetch_tokens(operation)
+                        operation.query_done.set()
+                        self.prefetch_revoke_queue.put(operation.request_id)
+                        self.record_storage_stat(
+                            "prefetch_dropped_tokens", len(operation.token_ids)
+                        )
+                        continue
+
+                    if operation.is_terminated():
+                        self.release_prefetch_tokens(operation)
+                        operation.query_done.set()
+                        self.prefetch_revoke_queue.put(operation.request_id)
+                        continue
+                    operation.hash_value = hash_value[
+                        : (storage_hit_count // self.page_size)
+                    ]
+                    operation.storage_hit_tokens = storage_hit_count
+                    operation.query_done.set()
+                    continue
 
                 if storage_hit_count < self.prefetch_threshold:
                     # not to prefetch if not enough benefits
@@ -1060,6 +1287,14 @@ class HiCacheController:
 
             except Empty:
                 continue
+
+    def start_prefetch_io(
+        self, operation: PrefetchOperation, host_indices: torch.Tensor
+    ) -> None:
+        """Start L3 reads after query-first staging allocation succeeds."""
+        operation.host_indices = host_indices
+        operation.io_started = True
+        self.prefetch_buffer.put(operation)
 
     def write_storage(
         self,

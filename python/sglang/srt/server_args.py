@@ -2110,6 +2110,14 @@ class ServerArgs:
             choices=["best_effort", "wait_complete", "timeout"],
         ),
     ] = "timeout"
+    hicache_storage_prefetch_capacity_ratio: A[
+        float,
+        "Maximum fraction of the host KV cache that may be reserved or occupied by L3 prefetches.",
+    ] = 0.5
+    hicache_storage_metrics_log_interval: A[
+        float,
+        "Interval in seconds for periodic HiCache L2/L3 summary logs. Set to 0 to disable.",
+    ] = 10.0
     hicache_storage_backend_extra_config: A[
         Optional[str],
         "A dictionary in JSON string format, or a string starting with a leading '@' and a config file in JSON/YAML/TOML format, containing extra configuration for the storage backend.",
@@ -5667,6 +5675,15 @@ class ServerArgs:
             or self.disaggregation_decode_enable_offload_kvcache
         ):
             return
+
+        if not 0 < self.hicache_storage_prefetch_capacity_ratio <= 1:
+            raise ValueError(
+                "--hicache-storage-prefetch-capacity-ratio must be in (0, 1]."
+            )
+        if self.hicache_storage_metrics_log_interval < 0:
+            raise ValueError(
+                "--hicache-storage-metrics-log-interval must be non-negative."
+            )
 
         # Step 1: Initial layout-io compatibility normalization.
         self._resolve_layout_io_compatibility()

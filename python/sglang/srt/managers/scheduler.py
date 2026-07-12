@@ -2291,6 +2291,23 @@ class Scheduler(
             req.init_next_round_input(self.tree_cache, cow_mamba=False)
             last_host_node = req.last_host_node
             if last_host_node.backuped or last_host_node is self.tree_cache.root_node:
+                # HiRadix may reclaim an L3-acknowledged node's redundant L2
+                # copy while retaining its L1 copy. Querying from an older host
+                # ancestor would hash the suffix against the wrong parent and
+                # attaching an L3 child below the resulting host gap would break
+                # radix eviction invariants. Wait until the L1-only suffix is
+                # evicted; the next request can then refill it continuously.
+                if req.last_node is not last_host_node and not getattr(
+                    req.last_node, "backuped", False
+                ):
+                    cache_controller = getattr(
+                        self.tree_cache, "cache_controller", None
+                    )
+                    if cache_controller is not None:
+                        cache_controller.record_storage_stat(
+                            "prefetch_skipped_host_gap"
+                        )
+                    return
                 last_hash = last_host_node.get_last_hash_value()
                 matched_len = len(req.prefix_indices) + req.host_hit_length
                 match_end = req._compute_max_prefix_len(

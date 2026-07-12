@@ -119,7 +119,7 @@ class PrefetchOperation(StorageOperation):
     def __init__(
         self,
         request_id: str,
-        host_indices: torch.Tensor,
+        host_indices: Optional[torch.Tensor],
         token_ids: List[int],
         last_hash: Optional[str] = None,
         prefix_keys: Optional[List[str]] = None,
@@ -129,6 +129,10 @@ class PrefetchOperation(StorageOperation):
         self._lock = threading.Lock()
         self._terminated_flag = False
         self.start_time = time.monotonic()
+        self.query_done = threading.Event()
+        self.storage_hit_tokens = 0
+        self.reserved_tokens = 0
+        self.io_started = False
         super().__init__(
             host_indices,
             token_ids,
@@ -172,6 +176,8 @@ class HybridCacheController(BaseHiCacheController):
         storage_backend_extra_config: Optional[dict] = None,
         transfer_layer_num: Optional[int] = None,
         enable_storage_metrics: bool = False,
+        prefetch_capacity_ratio: float = 0.5,
+        storage_metrics_log_interval: float = 10.0,
     ):
         startup_storage_backend = storage_backend
         self.extra_host_mem_release_queues: dict[PoolName, Queue[torch.Tensor]] = {}
@@ -191,6 +197,8 @@ class HybridCacheController(BaseHiCacheController):
             model_name=model_name,
             storage_backend_extra_config=storage_backend_extra_config,
             enable_storage_metrics=enable_storage_metrics,
+            prefetch_capacity_ratio=prefetch_capacity_ratio,
+            storage_metrics_log_interval=storage_metrics_log_interval,
         )
         # Override layer_num: hybrid models transfer all layers (For example, Linear Model (KV + Mamba)),
         # not just the full attention layers reported by full_kv_pool.
@@ -357,6 +365,7 @@ class HybridCacheController(BaseHiCacheController):
             for release_queue in self.extra_host_mem_release_queues.values():
                 release_queue.queue.clear()
             self.prefetch_tokens_occupied = 0
+            self.prefetch_tokens_reserved = 0
 
     def write(
         self,
@@ -365,6 +374,11 @@ class HybridCacheController(BaseHiCacheController):
         node_id: int = -1,
         extra_pools: Optional[list[PoolTransfer]] = None,
     ) -> Optional[torch.Tensor]:
+        if self.enable_storage and not self.resident_allocation_available(
+            len(device_indices)
+        ):
+            self.record_storage_stat("resident_allocation_deferred")
+            return None
         host_indices = self.mem_pool_host.alloc(len(device_indices))
         if host_indices is None:
             return None
@@ -549,7 +563,7 @@ class HybridCacheController(BaseHiCacheController):
     def prefetch(
         self,
         request_id: str,
-        host_indices: torch.Tensor,
+        host_indices: Optional[torch.Tensor],
         new_input_tokens: List[int],
         last_hash: Optional[str] = None,
         prefix_keys: Optional[List[str]] = None,
@@ -563,6 +577,8 @@ class HybridCacheController(BaseHiCacheController):
             prefix_keys=prefix_keys,
             pool_transfers=extra_pools,
         )
+        self.record_storage_stat("prefetch_requests")
+        self.record_storage_stat("prefetch_candidate_tokens", len(new_input_tokens))
         self.prefetch_queue.put(operation)
         return operation
 
@@ -604,6 +620,9 @@ class HybridCacheController(BaseHiCacheController):
 
         kv_hit_pages = hit_result.kv_hit_pages
         operation.pool_storage_result.update_kv_hit_pages(kv_hit_pages)
+        self.record_storage_stat(
+            "storage_backend_hit_tokens", kv_hit_pages * self.page_size
+        )
 
         return (
             hash_value[:kv_hit_pages],
