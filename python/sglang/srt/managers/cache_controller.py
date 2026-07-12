@@ -209,17 +209,25 @@ class HiCachePeriodicStats:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._values = defaultdict(float)
+        self._window_values = defaultdict(float)
+        self._total_values = defaultdict(float)
 
     def add(self, name: str, value: float = 1) -> None:
         with self._lock:
-            self._values[name] += value
+            self._window_values[name] += value
+            self._total_values[name] += value
 
-    def snapshot_and_reset(self) -> dict[str, float]:
+    def snapshot_and_reset(self) -> tuple[dict[str, float], dict[str, float]]:
         with self._lock:
-            values = dict(self._values)
-            self._values.clear()
-        return values
+            window_values = dict(self._window_values)
+            total_values = dict(self._total_values)
+            self._window_values.clear()
+        return window_values, total_values
+
+    def reset(self) -> None:
+        with self._lock:
+            self._window_values.clear()
+            self._total_values.clear()
 
 
 class HiCacheController:
@@ -272,6 +280,7 @@ class HiCacheController:
         self.storage_metrics_log_interval = storage_metrics_log_interval
         self._periodic_stats = HiCachePeriodicStats()
         self._last_storage_metrics_log_time = time.monotonic()
+        self._storage_metrics_start_time = time.monotonic()
         self._prefetch_budget_lock = threading.Lock()
         self.prefetch_tokens_reserved = 0
         self.prefetch_tokens_occupied = 0
@@ -499,6 +508,8 @@ class HiCacheController:
             )
             self.prefetch_tokens_occupied = 0
             self.prefetch_tokens_reserved = 0
+            self._periodic_stats.reset()
+            self._storage_metrics_start_time = time.monotonic()
 
             # Use dedicated gloo groups so storage prefetch sync is isolated
             # from other collectives and consistent across CPxTP participants.
@@ -1010,7 +1021,7 @@ class HiCacheController:
             self._periodic_stats.snapshot_and_reset()
             return
 
-        stats = self._periodic_stats.snapshot_and_reset()
+        stats, totals = self._periodic_stats.snapshot_and_reset()
         total = self.mem_pool_host.size
         available = self.mem_pool_host.available_size()
         size_per_token = getattr(self.mem_pool_host, "size_per_token", 0)
@@ -1021,11 +1032,12 @@ class HiCacheController:
         query_count = stats.get("storage_query_count", 0)
         read_count = stats.get("storage_read_count", 0)
         logger.info(
-            "HiCache summary: l2_used=%.2fGB/%.2fGB l2_available=%.2fGB "
+            "HiCache interval summary: l2_used=%.2fGB/%.2fGB l2_available=%.2fGB "
             "prefetch_occupied=%d/%d prefetch_reserved=%d "
-            "requests=%d candidate_tokens=%d backend_hit_tokens=%d "
+            "attempts=%d attempt_candidate_tokens=%d queries=%d "
+            "query_candidate_tokens=%d backend_hit_tokens=%d "
             "allocated_tokens=%d loaded_tokens=%d effective_hit_tokens=%d "
-            "rate_limited=%d alloc_failed_before_evict=%d "
+            "rate_limited=%d below_threshold=%d alloc_failed_before_evict=%d "
             "alloc_failed_after_evict=%d resident_deferred=%d "
             "trimmed_tokens=%d dropped_tokens=%d query_avg_ms=%.2f "
             "read_avg_ms=%.2f evictable_host_nodes=%d host_release_queue=%d "
@@ -1037,6 +1049,8 @@ class HiCacheController:
             self.prefetch_tokens_occupied,
             self.prefetch_capacity_limit,
             self.prefetch_tokens_reserved,
+            int(stats.get("prefetch_attempts", 0)),
+            int(stats.get("prefetch_attempt_candidate_tokens", 0)),
             int(stats.get("prefetch_requests", 0)),
             int(stats.get("prefetch_candidate_tokens", 0)),
             int(stats.get("storage_backend_hit_tokens", 0)),
@@ -1044,6 +1058,7 @@ class HiCacheController:
             int(stats.get("prefetch_loaded_tokens", 0)),
             int(stats.get("prefetch_effective_hit_tokens", 0)),
             int(stats.get("prefetch_rate_limited", 0)),
+            int(stats.get("prefetch_below_threshold", 0)),
             int(stats.get("prefetch_alloc_failed_before_evict", 0)),
             int(stats.get("prefetch_alloc_failed_after_evict", 0)),
             int(stats.get("resident_allocation_deferred", 0)),
@@ -1057,6 +1072,57 @@ class HiCacheController:
             int(stats.get("storage_aux_incomplete", 0)),
             int(stats.get("storage_acked_tokens", 0)),
             int(stats.get("storage_backed_l2_evicted_tokens", 0)),
+        )
+
+        def percentage(numerator: str, denominator: str) -> float:
+            denominator_value = totals.get(denominator, 0)
+            if denominator_value <= 0:
+                return 0.0
+            return 100.0 * totals.get(numerator, 0) / denominator_value
+
+        total_query_count = totals.get("storage_query_count", 0)
+        total_read_count = totals.get("storage_read_count", 0)
+        logger.info(
+            "HiCache cumulative summary: uptime_s=%.0f attempts=%d "
+            "attempt_candidate_tokens=%d queries=%d query_candidate_tokens=%d "
+            "backend_hit_tokens=%d allocated_tokens=%d loaded_tokens=%d "
+            "effective_hit_tokens=%d backend_hit_pct=%.2f allocation_pct=%.2f "
+            "load_pct=%.2f effective_pct=%.2f end_to_end_pct=%.2f "
+            "rate_limited=%d below_threshold=%d alloc_failed_before_evict=%d "
+            "alloc_failed_after_evict=%d resident_deferred=%d trimmed_tokens=%d "
+            "dropped_tokens=%d host_gap_skips=%d storage_aux_incomplete=%d "
+            "query_avg_ms=%.2f read_avg_ms=%.2f storage_acked_tokens=%d "
+            "storage_backed_l2_evicted_tokens=%d",
+            now - self._storage_metrics_start_time,
+            int(totals.get("prefetch_attempts", 0)),
+            int(totals.get("prefetch_attempt_candidate_tokens", 0)),
+            int(totals.get("prefetch_requests", 0)),
+            int(totals.get("prefetch_candidate_tokens", 0)),
+            int(totals.get("storage_backend_hit_tokens", 0)),
+            int(totals.get("prefetch_allocated_tokens", 0)),
+            int(totals.get("prefetch_loaded_tokens", 0)),
+            int(totals.get("prefetch_effective_hit_tokens", 0)),
+            percentage("storage_backend_hit_tokens", "prefetch_candidate_tokens"),
+            percentage("prefetch_allocated_tokens", "storage_backend_hit_tokens"),
+            percentage("prefetch_loaded_tokens", "prefetch_allocated_tokens"),
+            percentage("prefetch_effective_hit_tokens", "prefetch_loaded_tokens"),
+            percentage(
+                "prefetch_effective_hit_tokens",
+                "prefetch_attempt_candidate_tokens",
+            ),
+            int(totals.get("prefetch_rate_limited", 0)),
+            int(totals.get("prefetch_below_threshold", 0)),
+            int(totals.get("prefetch_alloc_failed_before_evict", 0)),
+            int(totals.get("prefetch_alloc_failed_after_evict", 0)),
+            int(totals.get("resident_allocation_deferred", 0)),
+            int(totals.get("prefetch_capacity_trimmed_tokens", 0)),
+            int(totals.get("prefetch_dropped_tokens", 0)),
+            int(totals.get("prefetch_skipped_host_gap", 0)),
+            int(totals.get("storage_aux_incomplete", 0)),
+            totals.get("storage_query_seconds", 0) * 1000 / max(1, total_query_count),
+            totals.get("storage_read_seconds", 0) * 1000 / max(1, total_read_count),
+            int(totals.get("storage_acked_tokens", 0)),
+            int(totals.get("storage_backed_l2_evicted_tokens", 0)),
         )
 
     def terminate_prefetch(self, operation):
@@ -1199,7 +1265,6 @@ class HiCacheController:
             if prefix_keys and len(prefix_keys) > 0:
                 prefix_keys += batch_hashes
 
-        self.record_storage_stat("storage_backend_hit_tokens", storage_query_count)
         return hash_value, storage_query_count
 
     def prefetch_thread_func(self):
@@ -1229,6 +1294,9 @@ class HiCacheController:
                     storage_hit_count_tensor, torch.distributed.ReduceOp.MIN
                 )
                 storage_hit_count = storage_hit_count_tensor.item()
+                self.record_storage_stat(
+                    "storage_backend_hit_tokens", storage_hit_count
+                )
 
                 # HiRadixCache uses query-first mode and supplies no host buffer
                 # until the continuous L3 hit length is known. Allocation and
@@ -1268,6 +1336,9 @@ class HiCacheController:
                     # not to prefetch if not enough benefits
                     self.prefetch_revoke_queue.put(operation.request_id)
                     self.append_host_mem_release(operation.host_indices)
+                    self.record_storage_stat(
+                        "prefetch_dropped_tokens", len(operation.token_ids)
+                    )
                     logger.debug(
                         f"Revoking prefetch for request {operation.request_id} due to insufficient hits ({storage_hit_count})."
                     )
@@ -1280,6 +1351,9 @@ class HiCacheController:
                         operation.host_indices[storage_hit_count:]
                     )
                     operation.host_indices = operation.host_indices[:storage_hit_count]
+                    self.record_storage_stat(
+                        "prefetch_allocated_tokens", storage_hit_count
+                    )
                     logger.debug(
                         f"Prefetching {len(operation.hash_value)} pages for request {operation.request_id}."
                     )

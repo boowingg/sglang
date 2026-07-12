@@ -57,6 +57,18 @@ class TestHiCacheL3Staging(unittest.TestCase):
         controller.mem_pool_host = _FakeHostPool(available)
         return controller
 
+    def test_periodic_stats_keep_window_and_cumulative_values(self):
+        stats = HiCachePeriodicStats()
+        stats.add("tokens", 10)
+        window, cumulative = stats.snapshot_and_reset()
+        self.assertEqual(window["tokens"], 10)
+        self.assertEqual(cumulative["tokens"], 10)
+
+        stats.add("tokens", 4)
+        window, cumulative = stats.snapshot_and_reset()
+        self.assertEqual(window["tokens"], 4)
+        self.assertEqual(cumulative["tokens"], 14)
+
     def test_prefetch_budget_tracks_reserved_and_allocated_tokens(self):
         controller = self._budget_controller(available=8)
 
