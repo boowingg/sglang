@@ -214,6 +214,24 @@ class TestMaybeInitCustomMemPool(unittest.TestCase):
 
 
 class TestGetHashStr(unittest.TestCase):
+    def test_python_fallback_matches_legacy_hashes(self):
+        with patch(
+            "sglang.srt.mem_cache.cpp_utils.native_hash._load_native_hash_module",
+            return_value=None,
+        ):
+            for name, tokens, prior_hash in _single_hash_compatibility_cases():
+                with self.subTest(kind="single", name=name):
+                    self.assertEqual(
+                        get_hash_str(tokens, prior_hash),
+                        _legacy_get_hash_str(tokens, prior_hash),
+                    )
+            for name, tokens, page_size, prior_hash in _page_hash_compatibility_cases():
+                with self.subTest(kind="paged", name=name):
+                    self.assertEqual(
+                        get_hash_str(tokens, prior_hash, page_size=page_size),
+                        _legacy_page_hashes(tokens, page_size, prior_hash),
+                    )
+
     def test_hash_str_matches_pre_optimization_per_token_loop(self):
         for name, tokens, prior_hash in _single_hash_compatibility_cases():
             with self.subTest(name=name):
