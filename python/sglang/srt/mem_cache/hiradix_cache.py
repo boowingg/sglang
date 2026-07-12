@@ -1726,15 +1726,13 @@ class HiRadixCache(RadixCache):
         prefetch_length = len(prefetch_key)
         if not self.enable_storage:
             return
-        stats = {
-            "prefetch_attempts": 1,
-            "prefetch_attempt_candidate_tokens": prefetch_length,
-        }
+        self.cache_controller.record_storage_stat("prefetch_attempts")
+        self.cache_controller.record_storage_stat(
+            "prefetch_attempt_candidate_tokens", prefetch_length
+        )
         if prefetch_length < self.prefetch_threshold:
-            stats["prefetch_below_threshold"] = 1
-            self.cache_controller.record_storage_stats(stats)
+            self.cache_controller.record_storage_stat("prefetch_below_threshold")
             return
-        self.cache_controller.record_storage_stats(stats)
         if self.cache_controller.prefetch_rate_limited():
             return
 

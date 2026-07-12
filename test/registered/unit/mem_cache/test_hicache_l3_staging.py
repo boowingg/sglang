@@ -69,11 +69,6 @@ class TestHiCacheL3Staging(unittest.TestCase):
         self.assertEqual(window["tokens"], 4)
         self.assertEqual(cumulative["tokens"], 14)
 
-        stats.add_many({"tokens": 3, "requests": 1})
-        window, cumulative = stats.snapshot_and_reset()
-        self.assertEqual(window, {"tokens": 3, "requests": 1})
-        self.assertEqual(cumulative, {"tokens": 17, "requests": 1})
-
     def test_prefetch_budget_tracks_reserved_and_allocated_tokens(self):
         controller = self._budget_controller(available=8)
 
