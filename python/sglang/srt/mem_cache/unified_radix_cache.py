@@ -1887,14 +1887,10 @@ class UnifiedRadixCache(KVCacheEventMixin, BasePrefixCache):
             is_bigram=self.is_eagle,
         ).page_aligned(self.page_size)
         prefetch_length = len(prefetch_key)
-        self.cache_controller.record_storage_stat("prefetch_attempts")
-        self.cache_controller.record_storage_stat(
-            "prefetch_attempt_candidate_tokens", prefetch_length
-        )
-        if prefetch_length < self.prefetch_threshold:
-            self.cache_controller.record_storage_stat("prefetch_below_threshold")
-            return
-        if self.cache_controller.prefetch_rate_limited():
+        if (
+            prefetch_length < self.prefetch_threshold
+            or self.cache_controller.prefetch_rate_limited()
+        ):
             return
 
         anchor_lock_params = self.inc_host_lock_ref(last_host_node).to_dec_params()

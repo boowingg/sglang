@@ -2291,11 +2291,6 @@ class Scheduler(
             req.init_next_round_input(self.tree_cache, cow_mamba=False)
             last_host_node = req.last_host_node
             if last_host_node.backuped or last_host_node is self.tree_cache.root_node:
-                matched_len = len(req.prefix_indices) + req.host_hit_length
-                match_end = req._compute_max_prefix_len(
-                    len(req.full_untruncated_fill_ids)
-                )
-                new_input_tokens = req.full_untruncated_fill_ids[matched_len:match_end]
                 # HiRadix may reclaim an L3-acknowledged node's redundant L2
                 # copy while retaining its L1 copy. Querying from an older host
                 # ancestor would hash the suffix against the wrong parent and
@@ -2309,18 +2304,16 @@ class Scheduler(
                         self.tree_cache, "cache_controller", None
                     )
                     if cache_controller is not None:
-                        candidate_tokens = (
-                            len(new_input_tokens) // self.page_size * self.page_size
-                        )
-                        cache_controller.record_storage_stat("prefetch_attempts")
-                        cache_controller.record_storage_stat(
-                            "prefetch_attempt_candidate_tokens", candidate_tokens
-                        )
                         cache_controller.record_storage_stat(
                             "prefetch_skipped_host_gap"
                         )
                     return
                 last_hash = last_host_node.get_last_hash_value()
+                matched_len = len(req.prefix_indices) + req.host_hit_length
+                match_end = req._compute_max_prefix_len(
+                    len(req.full_untruncated_fill_ids)
+                )
+                new_input_tokens = req.full_untruncated_fill_ids[matched_len:match_end]
 
                 prefix_keys = (
                     last_host_node.get_prefix_hash_values(last_host_node.parent)
