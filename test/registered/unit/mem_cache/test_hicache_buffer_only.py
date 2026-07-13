@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import torch
 
 from sglang.srt.managers.cache_controller import PrefetchOperation
+from sglang.srt.mem_cache.base_prefix_cache import InsertParams
 from sglang.srt.mem_cache.hiradix_cache import (
     HiRadixCache,
     LoadBackContext,
@@ -36,6 +37,160 @@ class TestHiCacheBufferOnly(unittest.TestCase):
 
         self.assertFalse(operation.increment(4))
         self.assertEqual(operation.completed_tokens, 4)
+
+    def test_loading_node_is_hidden_from_regular_prefix_match(self):
+        cache = HiRadixCache.__new__(HiRadixCache)
+        cache.page_size = 2
+
+        root = _node([], values=[])
+        child = _node([1, 2, 3, 4], parent=root, values=[10, 11, 12, 13])
+        child.device_loading = True
+        root.children[child.key.child_key(cache.page_size)] = child
+
+        values, last_node = cache._match_prefix_helper(root, child.key)
+        self.assertEqual(values, [])
+        self.assertIs(last_node, root)
+
+    def test_unfinished_request_rematches_indices_loaded_from_l3(self):
+        cache = HiRadixCache.__new__(HiRadixCache)
+        cache.disable = False
+        cache.page_size = 2
+        cache.is_eagle = False
+        cache.buffer_only = True
+        mem_pool_host = MagicMock()
+        finish_event = MagicMock()
+        cache.cache_controller = SimpleNamespace(
+            write_policy="write_back",
+            mem_pool_host=mem_pool_host,
+            ack_load_queue=[],
+        )
+        cache.token_to_kv_pool_allocator = SimpleNamespace(free=MagicMock())
+        cache.req_to_token_pool = SimpleNamespace(
+            req_to_token=torch.tensor([[10, 11, 12, 13]], dtype=torch.int64),
+            write=MagicMock(),
+        )
+        cache._empty_match_result = SimpleNamespace(
+            device_indices=torch.empty(0, dtype=torch.int64)
+        )
+        cache.dec_lock_ref = MagicMock()
+        cache.inc_lock_ref = MagicMock()
+        cache._tag_session_leaf = MagicMock()
+        cache._record_store_event = MagicMock()
+        cache._update_host_leaf_status = MagicMock()
+        cache.transient_host_nodes_by_reqid = {}
+
+        root = _node([], values=[])
+        root.host_value = []
+        child = _node([1, 2, 3, 4], parent=root, values=[10, 11, 12, 13])
+        child.host_value = torch.arange(4)
+        child.host_value_transient = True
+        child.transient_owner_req_id = "req"
+        child.device_loading = True
+        child.protect_host()
+        root.children[child.key.child_key(cache.page_size)] = child
+        cache.root_node = root
+        cache.transient_host_nodes_by_reqid["req"] = [child]
+        cache.ongoing_load_back = {
+            child.id: LoadBackContext(end_node=child, host_nodes=[child])
+        }
+        cache.cache_controller.ack_load_queue.append(
+            (0, finish_event, [child.id])
+        )
+
+        req = SimpleNamespace(
+            req_pool_idx=0,
+            extra_key=None,
+            cache_protected_len=4,
+            last_node=child,
+            prefix_indices=torch.arange(4),
+            priority=0,
+            get_fill_ids=lambda: [1, 2, 3, 4],
+        )
+
+        cache.cache_unfinished_req(req, chunked=True)
+
+        self.assertTrue(torch.equal(req.prefix_indices, child.value))
+        self.assertIs(req.last_node, child)
+        self.assertFalse(child.device_loading)
+        self.assertIsNone(child.host_value)
+        self.assertEqual(cache.cache_controller.ack_load_queue, [])
+        finish_event.synchronize.assert_called_once()
+        mem_pool_host.free.assert_called_once()
+
+    def test_loading_prefix_sync_does_not_wait_for_later_unrelated_load(self):
+        cache = HiRadixCache.__new__(HiRadixCache)
+        cache.page_size = 2
+        cache._record_store_event = MagicMock()
+        cache.dec_lock_ref = MagicMock()
+
+        root = _node([], values=[])
+        target = _node([1, 2], parent=root, values=[10, 11])
+        unrelated = _node([9, 10], parent=root, values=[20, 21])
+        for node in (target, unrelated):
+            node.host_value = torch.arange(2)
+            node.device_loading = True
+            node.protect_host()
+            root.children[node.key.child_key(cache.page_size)] = node
+        cache.root_node = root
+
+        target_event = MagicMock()
+        unrelated_event = MagicMock()
+        cache.ongoing_load_back = {
+            target.id: LoadBackContext(end_node=target, host_nodes=[target]),
+            unrelated.id: LoadBackContext(
+                end_node=unrelated, host_nodes=[unrelated]
+            ),
+        }
+        cache.cache_controller = SimpleNamespace(
+            ack_load_queue=[
+                (0, target_event, [target.id]),
+                (1, unrelated_event, [unrelated.id]),
+            ]
+        )
+
+        cache._synchronize_loading_prefix(target.key)
+
+        self.assertFalse(target.device_loading)
+        self.assertTrue(unrelated.device_loading)
+        self.assertNotIn(target.id, cache.ongoing_load_back)
+        self.assertIn(unrelated.id, cache.ongoing_load_back)
+        self.assertEqual(len(cache.cache_controller.ack_load_queue), 1)
+        target_event.synchronize.assert_called_once()
+        unrelated_event.synchronize.assert_not_called()
+
+    def test_recomputation_releases_transient_l3_host_pages(self):
+        cache = HiRadixCache.__new__(HiRadixCache)
+        cache.page_size = 2
+        cache.is_eagle = False
+        cache.buffer_only = True
+        cache.evictable_size_ = 0
+        cache.evictable_leaves = set()
+        cache.evictable_host_leaves = set()
+        cache.transient_host_nodes_by_reqid = {}
+        mem_pool_host = MagicMock()
+        cache.cache_controller = SimpleNamespace(mem_pool_host=mem_pool_host)
+
+        root = _node([], values=[])
+        child = _node([1, 2, 3, 4], parent=root)
+        child.host_value = torch.arange(4)
+        child.host_value_transient = True
+        child.transient_owner_req_id = "req"
+        root.children[child.key.child_key(cache.page_size)] = child
+        cache.root_node = root
+        cache.evictable_host_leaves.add(child)
+        cache.transient_host_nodes_by_reqid["req"] = [child]
+
+        cache.insert(
+            InsertParams(
+                key=child.key,
+                value=torch.tensor([10, 11, 12, 13], dtype=torch.int64),
+            )
+        )
+
+        mem_pool_host.free.assert_called_once()
+        self.assertIsNone(child.host_value)
+        self.assertFalse(child.host_value_transient)
+        self.assertNotIn("req", cache.transient_host_nodes_by_reqid)
 
     def test_split_propagates_pending_write_and_storage_state(self):
         cache = HiRadixCache.__new__(HiRadixCache)
