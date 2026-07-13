@@ -1,6 +1,7 @@
 import threading
 import unittest
 from array import array
+from collections import defaultdict
 from unittest import mock
 
 import torch
@@ -9,6 +10,7 @@ from sglang.srt.managers.cache_controller import (
     HiCacheController,
     HiCachePeriodicStats,
     PrefetchOperation,
+    StorageOperation,
 )
 from sglang.srt.mem_cache.hiradix_cache import HiRadixCache
 from sglang.srt.mem_cache.radix_cache import RadixKey, TreeNode
@@ -56,6 +58,60 @@ class TestHiCacheL3Staging(unittest.TestCase):
         controller._periodic_stats = HiCachePeriodicStats()
         controller.mem_pool_host = _FakeHostPool(available)
         return controller
+
+    def test_cumulative_stats_are_folded_only_at_snapshot(self):
+        controller = HiCacheController.__new__(HiCacheController)
+        controller._periodic_stats = HiCachePeriodicStats()
+        controller._cumulative_storage_stats = defaultdict(float)
+
+        controller.record_storage_stats({"tokens": 10, "requests": 1})
+        self.assertEqual(controller._cumulative_storage_stats, {})
+
+        window = controller._periodic_stats.snapshot_and_reset()
+        cumulative = controller._accumulate_storage_stats(window)
+        self.assertEqual(window, {"tokens": 10, "requests": 1})
+        self.assertEqual(cumulative, {"tokens": 10, "requests": 1})
+
+        controller.record_storage_stats({"tokens": 4, "failures": 1})
+        window = controller._periodic_stats.snapshot_and_reset()
+        cumulative = controller._accumulate_storage_stats(window)
+        self.assertEqual(window, {"tokens": 4, "failures": 1})
+        self.assertEqual(cumulative, {"tokens": 14, "requests": 1, "failures": 1})
+
+    def test_periodic_stats_batch_updates_are_thread_safe(self):
+        stats = HiCachePeriodicStats()
+
+        def add_values():
+            for _ in range(1000):
+                stats.add_many({"requests": 1, "tokens": 4})
+
+        threads = [threading.Thread(target=add_values) for _ in range(4)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(
+            stats.snapshot_and_reset(), {"requests": 4000, "tokens": 16000}
+        )
+
+    def test_page_backup_reports_batch_failure(self):
+        controller = HiCacheController.__new__(HiCacheController)
+        controller.page_size = 2
+        controller.has_draft = False
+        controller.page_set_func = mock.Mock(side_effect=[True, False])
+
+        page_count = 130
+        operation = StorageOperation(
+            torch.arange(page_count * controller.page_size),
+            list(range(page_count * controller.page_size)),
+            hash_value=[f"page-{i}" for i in range(page_count)],
+        )
+        attempted_batches, failed_batches = controller._page_backup(operation)
+
+        self.assertEqual(attempted_batches, 2)
+        self.assertEqual(failed_batches, 1)
+        self.assertEqual(operation.completed_tokens, 128 * controller.page_size)
 
     def test_prefetch_budget_tracks_reserved_and_allocated_tokens(self):
         controller = self._budget_controller(available=8)

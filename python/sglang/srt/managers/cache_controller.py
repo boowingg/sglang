@@ -186,6 +186,7 @@ class PrefetchOperation(StorageOperation):
         self.storage_hit_tokens = 0
         self.reserved_tokens = 0
         self.io_started = False
+        self.storage_read_failed = False
 
         super().__init__(host_indices, token_ids, last_hash, prefix_keys=prefix_keys)
 
@@ -215,11 +216,20 @@ class HiCachePeriodicStats:
         with self._lock:
             self._values[name] += value
 
+    def add_many(self, values: dict[str, float]) -> None:
+        with self._lock:
+            for name, value in values.items():
+                self._values[name] += value
+
     def snapshot_and_reset(self) -> dict[str, float]:
         with self._lock:
             values = dict(self._values)
             self._values.clear()
         return values
+
+    def reset(self) -> None:
+        with self._lock:
+            self._values.clear()
 
 
 class HiCacheController:
@@ -272,6 +282,9 @@ class HiCacheController:
         self.storage_metrics_log_interval = storage_metrics_log_interval
         self._periodic_stats = HiCachePeriodicStats()
         self._last_storage_metrics_log_time = time.monotonic()
+        self._storage_metrics_start_time = self._last_storage_metrics_log_time
+        self._cumulative_storage_stats = defaultdict(float)
+        self._storage_queue_sampled_peaks = defaultdict(int)
         self._prefetch_budget_lock = threading.Lock()
         self.prefetch_tokens_reserved = 0
         self.prefetch_tokens_occupied = 0
@@ -499,6 +512,11 @@ class HiCacheController:
             )
             self.prefetch_tokens_occupied = 0
             self.prefetch_tokens_reserved = 0
+            self._periodic_stats.reset()
+            self._cumulative_storage_stats.clear()
+            self._storage_queue_sampled_peaks.clear()
+            self._last_storage_metrics_log_time = time.monotonic()
+            self._storage_metrics_start_time = self._last_storage_metrics_log_time
 
             # Use dedicated gloo groups so storage prefetch sync is isolated
             # from other collectives and consistent across CPxTP participants.
@@ -918,6 +936,7 @@ class HiCacheController:
         new_input_tokens: List[int],
         last_hash: Optional[str] = None,
         prefix_keys: Optional[List[str]] = None,
+        attempt_candidate_tokens: Optional[int] = None,
     ) -> PrefetchOperation:
         """
         Prefetch KV caches from storage backend to host memory.
@@ -925,13 +944,50 @@ class HiCacheController:
         operation = PrefetchOperation(
             request_id, host_indices, new_input_tokens, last_hash, prefix_keys
         )
-        self.record_storage_stat("prefetch_requests")
-        self.record_storage_stat("prefetch_candidate_tokens", len(new_input_tokens))
+        candidate_tokens = len(new_input_tokens)
+        if attempt_candidate_tokens is None:
+            attempt_candidate_tokens = candidate_tokens
+        stats = {
+            "prefetch_requests": 1,
+            "prefetch_candidate_tokens": candidate_tokens,
+        }
+        if attempt_candidate_tokens > candidate_tokens:
+            stats["prefetch_prequery_trimmed_tokens"] = (
+                attempt_candidate_tokens - candidate_tokens
+            )
+        self.record_storage_stats(stats)
         self.prefetch_queue.put(operation)
         return operation
 
     def record_storage_stat(self, name: str, value: float = 1) -> None:
         self._periodic_stats.add(name, value)
+
+    def record_storage_stats(self, values: dict[str, float]) -> None:
+        self._periodic_stats.add_many(values)
+
+    def record_prefetch_skip(self, reason: str, candidate_tokens: int) -> None:
+        self.record_storage_stats(
+            {
+                f"prefetch_{reason}": 1,
+                f"prefetch_{reason}_tokens": candidate_tokens,
+            }
+        )
+
+    def record_prefetch_loss(self, reason: str, tokens: int) -> None:
+        self.record_storage_stats(
+            {
+                f"prefetch_{reason}": 1,
+                f"prefetch_{reason}_tokens": tokens,
+            }
+        )
+
+    def _accumulate_storage_stats(
+        self, window_stats: dict[str, float]
+    ) -> dict[str, float]:
+        # Keep cumulative work off the request and IO paths; fold once per log window.
+        for name, value in window_stats.items():
+            self._cumulative_storage_stats[name] += value
+        return self._cumulative_storage_stats
 
     def reserve_prefetch_tokens(
         self,
@@ -998,6 +1054,7 @@ class HiCacheController:
         now = time.monotonic()
         if interval <= 0 or now - self._last_storage_metrics_log_time < interval:
             return
+        window_seconds = max(1e-9, now - self._last_storage_metrics_log_time)
         self._last_storage_metrics_log_time = now
 
         # One summary per TP/PP/CP replica avoids multiplying identical logs.
@@ -1011,52 +1068,346 @@ class HiCacheController:
             return
 
         stats = self._periodic_stats.snapshot_and_reset()
+        cumulative = self._accumulate_storage_stats(stats)
+        uptime_seconds = max(1e-9, now - self._storage_metrics_start_time)
+
         total = self.mem_pool_host.size
         available = self.mem_pool_host.available_size()
         size_per_token = getattr(self.mem_pool_host, "size_per_token", 0)
 
-        def to_gb(tokens):
+        def to_gb(tokens: float) -> float:
             return tokens * size_per_token / 1e9
 
-        query_count = stats.get("storage_query_count", 0)
-        read_count = stats.get("storage_read_count", 0)
+        def value(data: dict[str, float], name: str) -> float:
+            return data.get(name, 0)
+
+        def count(data: dict[str, float], name: str) -> int:
+            return int(value(data, name))
+
+        def percentage(
+            data: dict[str, float], numerator: str, denominator: str
+        ) -> float:
+            return percentage_values(value(data, numerator), value(data, denominator))
+
+        def percentage_values(numerator: float, denominator: float) -> float:
+            if denominator <= 0:
+                return 0.0
+            return 100.0 * numerator / denominator
+
+        def average_ms(
+            data: dict[str, float], seconds_name: str, count_name: str
+        ) -> float:
+            operation_count = value(data, count_name)
+            if operation_count <= 0:
+                return 0.0
+            return 1000.0 * value(data, seconds_name) / operation_count
+
+        def token_rate(
+            data: dict[str, float], tokens_name: str, elapsed: float
+        ) -> float:
+            return value(data, tokens_name) / elapsed
+
+        def bandwidth_gbps(
+            data: dict[str, float], tokens_name: str, elapsed: float
+        ) -> float:
+            return to_gb(value(data, tokens_name)) / elapsed
+
+        def queue_size(name: str) -> int:
+            queue = getattr(self, name, None)
+            return queue.qsize() if queue is not None else 0
+
+        queue_sizes = {
+            "prefetch_q": queue_size("prefetch_queue"),
+            "read_q": queue_size("prefetch_buffer"),
+            "backup_q": queue_size("backup_queue"),
+            "ack_q": queue_size("ack_backup_queue"),
+            "release_q": queue_size("host_mem_release_queue"),
+        }
+        for name, queue_depth in queue_sizes.items():
+            self._storage_queue_sampled_peaks[name] = max(
+                self._storage_queue_sampled_peaks[name], queue_depth
+            )
+
+        def loss(data: dict[str, float], before: str, after: str) -> int:
+            return max(0, count(data, before) - count(data, after))
+
+        prequery_skip_reasons = (
+            "below_threshold",
+            "rate_limited",
+            "skipped_host_gap",
+            "allocation_failed",
+            "aux_allocation_failed",
+        )
+
+        def prefetch_attempts(data: dict[str, float]) -> int:
+            return count(data, "prefetch_requests") + sum(
+                count(data, f"prefetch_{reason}") for reason in prequery_skip_reasons
+            )
+
+        def prefetch_attempt_tokens(data: dict[str, float]) -> int:
+            return (
+                count(data, "prefetch_candidate_tokens")
+                + count(data, "prefetch_prequery_trimmed_tokens")
+                + sum(
+                    count(data, f"prefetch_{reason}_tokens")
+                    for reason in prequery_skip_reasons
+                )
+            )
+
         logger.info(
-            "HiCache summary: l2_used=%.2fGB/%.2fGB l2_available=%.2fGB "
+            "HiCache interval summary: window_s=%.1f "
+            "l2_used=%.2fGB/%.2fGB l2_available=%.2fGB "
             "prefetch_occupied=%d/%d prefetch_reserved=%d "
-            "requests=%d candidate_tokens=%d backend_hit_tokens=%d "
-            "allocated_tokens=%d loaded_tokens=%d effective_hit_tokens=%d "
-            "rate_limited=%d alloc_failed_before_evict=%d "
-            "alloc_failed_after_evict=%d resident_deferred=%d "
-            "trimmed_tokens=%d dropped_tokens=%d query_avg_ms=%.2f "
-            "read_avg_ms=%.2f evictable_host_nodes=%d host_release_queue=%d "
-            "host_gap_skips=%d storage_aux_incomplete=%d storage_acked_tokens=%d "
-            "storage_backed_l2_evicted_tokens=%d",
+            "attempts=%d attempt_tokens=%d enqueued=%d/%d queries=%d/%d "
+            "backend_hit=%d backend_miss=%d backend_hit_pct=%.2f "
+            "query_avg_ms=%.2f query_tok_s=%.1f "
+            "allocated=%d loaded=%d effective=%d end_to_end_pct=%.2f "
+            "below_threshold_ops=%d below_threshold_tokens=%d "
+            "rate_limited_ops=%d rate_limited_tokens=%d "
+            "host_gap_ops=%d host_gap_tokens=%d "
+            "allocation_failed_ops=%d allocation_failed_tokens=%d "
+            "aux_allocation_failed_ops=%d aux_allocation_failed_tokens=%d "
+            "trimmed=%d dropped=%d alloc_fail_before=%d alloc_fail_after=%d "
+            "resident_deferred=%d probe_ops=%d probe_candidate=%d probe_hit=%d "
+            "probe_avg_ms=%.2f probe_skip_threshold=%d probe_skip_rate=%d "
+            "read_ops=%d read_requested=%d read_incomplete_tokens=%d "
+            "read_failed_tokens=%d read_fail_pct=%.2f read_avg_ms=%.2f "
+            "read_gbps=%.3f "
+            "write_ops=%d write_batches=%d write_requested=%d write_completed=%d "
+            "write_failed_ops=%d write_failed_batches=%d "
+            "write_incomplete_tokens=%d write_incomplete_pct=%.2f "
+            "write_avg_ms=%.2f "
+            "write_gbps=%.3f queues=prefetch:%d/read:%d/backup:%d/ack:%d/release:%d "
+            "evictable_host_nodes=%d "
+            "storage_aux_incomplete=%d storage_acked=%d l2_reclaimed=%d",
+            window_seconds,
             to_gb(total - available),
             to_gb(total),
             to_gb(available),
             self.prefetch_tokens_occupied,
             self.prefetch_capacity_limit,
             self.prefetch_tokens_reserved,
-            int(stats.get("prefetch_requests", 0)),
-            int(stats.get("prefetch_candidate_tokens", 0)),
-            int(stats.get("storage_backend_hit_tokens", 0)),
-            int(stats.get("prefetch_allocated_tokens", 0)),
-            int(stats.get("prefetch_loaded_tokens", 0)),
-            int(stats.get("prefetch_effective_hit_tokens", 0)),
-            int(stats.get("prefetch_rate_limited", 0)),
-            int(stats.get("prefetch_alloc_failed_before_evict", 0)),
-            int(stats.get("prefetch_alloc_failed_after_evict", 0)),
-            int(stats.get("resident_allocation_deferred", 0)),
-            int(stats.get("prefetch_capacity_trimmed_tokens", 0)),
-            int(stats.get("prefetch_dropped_tokens", 0)),
-            stats.get("storage_query_seconds", 0) * 1000 / max(1, query_count),
-            stats.get("storage_read_seconds", 0) * 1000 / max(1, read_count),
+            prefetch_attempts(stats),
+            prefetch_attempt_tokens(stats),
+            count(stats, "prefetch_requests"),
+            count(stats, "prefetch_candidate_tokens"),
+            count(stats, "storage_query_count"),
+            count(stats, "storage_query_candidate_tokens"),
+            count(stats, "storage_backend_hit_tokens"),
+            loss(
+                stats,
+                "storage_query_candidate_tokens",
+                "storage_backend_hit_tokens",
+            ),
+            percentage(
+                stats,
+                "storage_backend_hit_tokens",
+                "storage_query_candidate_tokens",
+            ),
+            average_ms(stats, "storage_query_seconds", "storage_query_count"),
+            token_rate(stats, "storage_query_candidate_tokens", window_seconds),
+            count(stats, "prefetch_allocated_tokens"),
+            count(stats, "prefetch_loaded_tokens"),
+            count(stats, "prefetch_effective_hit_tokens"),
+            percentage_values(
+                value(stats, "prefetch_effective_hit_tokens"),
+                prefetch_attempt_tokens(stats),
+            ),
+            count(stats, "prefetch_below_threshold"),
+            count(stats, "prefetch_below_threshold_tokens"),
+            count(stats, "prefetch_rate_limited"),
+            count(stats, "prefetch_rate_limited_tokens"),
+            count(stats, "prefetch_skipped_host_gap"),
+            count(stats, "prefetch_skipped_host_gap_tokens"),
+            count(stats, "prefetch_allocation_failed"),
+            count(stats, "prefetch_allocation_failed_tokens"),
+            count(stats, "prefetch_aux_allocation_failed"),
+            count(stats, "prefetch_aux_allocation_failed_tokens"),
+            count(stats, "prefetch_capacity_trimmed_tokens"),
+            count(stats, "prefetch_dropped_tokens"),
+            count(stats, "prefetch_alloc_failed_before_evict"),
+            count(stats, "prefetch_alloc_failed_after_evict"),
+            count(stats, "resident_allocation_deferred"),
+            count(stats, "storage_probe_count"),
+            count(stats, "storage_probe_candidate_tokens"),
+            count(stats, "storage_probe_hit_tokens"),
+            average_ms(stats, "storage_probe_seconds", "storage_probe_count"),
+            count(stats, "storage_probe_below_threshold"),
+            count(stats, "storage_probe_rate_limited"),
+            count(stats, "storage_read_count"),
+            count(stats, "storage_read_requested_tokens"),
+            count(stats, "storage_read_incomplete_tokens"),
+            count(stats, "storage_read_failed_tokens"),
+            percentage(
+                stats,
+                "storage_read_failed_tokens",
+                "storage_read_requested_tokens",
+            ),
+            average_ms(stats, "storage_read_seconds", "storage_read_count"),
+            bandwidth_gbps(stats, "prefetch_loaded_tokens", window_seconds),
+            count(stats, "storage_write_count"),
+            count(stats, "storage_write_batches"),
+            count(stats, "storage_write_requested_tokens"),
+            count(stats, "storage_write_completed_tokens"),
+            count(stats, "storage_write_failed_ops"),
+            count(stats, "storage_write_failed_batches"),
+            count(stats, "storage_write_incomplete_tokens"),
+            percentage(
+                stats,
+                "storage_write_incomplete_tokens",
+                "storage_write_requested_tokens",
+            ),
+            average_ms(stats, "storage_write_seconds", "storage_write_count"),
+            bandwidth_gbps(stats, "storage_write_completed_tokens", window_seconds),
+            queue_sizes["prefetch_q"],
+            queue_sizes["read_q"],
+            queue_sizes["backup_q"],
+            queue_sizes["ack_q"],
+            queue_sizes["release_q"],
             evictable_host_nodes,
-            self.host_mem_release_queue.qsize(),
-            int(stats.get("prefetch_skipped_host_gap", 0)),
-            int(stats.get("storage_aux_incomplete", 0)),
-            int(stats.get("storage_acked_tokens", 0)),
-            int(stats.get("storage_backed_l2_evicted_tokens", 0)),
+            count(stats, "storage_aux_incomplete"),
+            count(stats, "storage_acked_tokens"),
+            count(stats, "storage_backed_l2_evicted_tokens"),
+        )
+
+        backend_miss_tokens = loss(
+            cumulative,
+            "storage_query_candidate_tokens",
+            "storage_backend_hit_tokens",
+        )
+        allocation_loss_tokens = loss(
+            cumulative, "storage_backend_hit_tokens", "prefetch_allocated_tokens"
+        )
+        read_loss_tokens = loss(
+            cumulative, "prefetch_allocated_tokens", "prefetch_loaded_tokens"
+        )
+        unused_loaded_tokens = loss(
+            cumulative, "prefetch_loaded_tokens", "prefetch_effective_hit_tokens"
+        )
+        ack_lag_tokens = loss(
+            cumulative, "storage_write_completed_tokens", "storage_acked_tokens"
+        )
+        logger.info(
+            "HiCache cumulative summary: uptime_s=%.0f attempts=%d attempt_tokens=%d "
+            "enqueued=%d/%d queries=%d/%d backend_hit=%d backend_miss=%d "
+            "allocated=%d loaded=%d effective=%d enqueue_pct=%.2f query_pct=%.2f "
+            "backend_hit_pct=%.2f query_tok_s=%.1f query_avg_ms=%.2f "
+            "allocation_pct=%.2f load_pct=%.2f "
+            "effective_pct=%.2f end_to_end_pct=%.2f "
+            "loss_tokens=backend:%d/allocation:%d/read:%d/unused:%d "
+            "skip_tokens=threshold:%d/rate:%d/host_gap:%d/allocation:%d/aux:%d "
+            "probe_ops=%d probe_candidate=%d probe_hit=%d probe_hit_pct=%.2f "
+            "probe_avg_ms=%.2f probe_skip_threshold=%d probe_skip_rate=%d "
+            "read_ops=%d read_tok_s=%.1f read_avg_ms=%.2f "
+            "read_incomplete_tokens=%d read_failed_tokens=%d "
+            "read_fail_pct=%.2f read_gbps=%.3f "
+            "write_ops=%d write_batches=%d write_tok_s=%.1f write_avg_ms=%.2f "
+            "write_failed_ops=%d write_failed_batches=%d "
+            "write_incomplete_tokens=%d "
+            "write_incomplete_pct=%.2f write_gbps=%.3f ack_lag_tokens=%d "
+            "queues=prefetch:%d/read:%d/backup:%d/ack:%d/release:%d "
+            "sampled_queue_peaks=prefetch:%d/read:%d/backup:%d/ack:%d/release:%d",
+            uptime_seconds,
+            prefetch_attempts(cumulative),
+            prefetch_attempt_tokens(cumulative),
+            count(cumulative, "prefetch_requests"),
+            count(cumulative, "prefetch_candidate_tokens"),
+            count(cumulative, "storage_query_count"),
+            count(cumulative, "storage_query_candidate_tokens"),
+            count(cumulative, "storage_backend_hit_tokens"),
+            backend_miss_tokens,
+            count(cumulative, "prefetch_allocated_tokens"),
+            count(cumulative, "prefetch_loaded_tokens"),
+            count(cumulative, "prefetch_effective_hit_tokens"),
+            percentage_values(
+                value(cumulative, "prefetch_candidate_tokens"),
+                prefetch_attempt_tokens(cumulative),
+            ),
+            percentage_values(
+                value(cumulative, "storage_query_candidate_tokens"),
+                prefetch_attempt_tokens(cumulative),
+            ),
+            percentage(
+                cumulative,
+                "storage_backend_hit_tokens",
+                "storage_query_candidate_tokens",
+            ),
+            token_rate(cumulative, "storage_query_candidate_tokens", uptime_seconds),
+            average_ms(cumulative, "storage_query_seconds", "storage_query_count"),
+            percentage(
+                cumulative,
+                "prefetch_allocated_tokens",
+                "storage_backend_hit_tokens",
+            ),
+            percentage(
+                cumulative, "prefetch_loaded_tokens", "prefetch_allocated_tokens"
+            ),
+            percentage(
+                cumulative,
+                "prefetch_effective_hit_tokens",
+                "prefetch_loaded_tokens",
+            ),
+            percentage_values(
+                value(cumulative, "prefetch_effective_hit_tokens"),
+                prefetch_attempt_tokens(cumulative),
+            ),
+            backend_miss_tokens,
+            allocation_loss_tokens,
+            read_loss_tokens,
+            unused_loaded_tokens,
+            count(cumulative, "prefetch_below_threshold_tokens"),
+            count(cumulative, "prefetch_rate_limited_tokens"),
+            count(cumulative, "prefetch_skipped_host_gap_tokens"),
+            count(cumulative, "prefetch_allocation_failed_tokens"),
+            count(cumulative, "prefetch_aux_allocation_failed_tokens"),
+            count(cumulative, "storage_probe_count"),
+            count(cumulative, "storage_probe_candidate_tokens"),
+            count(cumulative, "storage_probe_hit_tokens"),
+            percentage(
+                cumulative,
+                "storage_probe_hit_tokens",
+                "storage_probe_candidate_tokens",
+            ),
+            average_ms(cumulative, "storage_probe_seconds", "storage_probe_count"),
+            count(cumulative, "storage_probe_below_threshold"),
+            count(cumulative, "storage_probe_rate_limited"),
+            count(cumulative, "storage_read_count"),
+            token_rate(cumulative, "prefetch_loaded_tokens", uptime_seconds),
+            average_ms(cumulative, "storage_read_seconds", "storage_read_count"),
+            count(cumulative, "storage_read_incomplete_tokens"),
+            count(cumulative, "storage_read_failed_tokens"),
+            percentage(
+                cumulative,
+                "storage_read_failed_tokens",
+                "storage_read_requested_tokens",
+            ),
+            bandwidth_gbps(cumulative, "prefetch_loaded_tokens", uptime_seconds),
+            count(cumulative, "storage_write_count"),
+            count(cumulative, "storage_write_batches"),
+            token_rate(cumulative, "storage_write_completed_tokens", uptime_seconds),
+            average_ms(cumulative, "storage_write_seconds", "storage_write_count"),
+            count(cumulative, "storage_write_failed_ops"),
+            count(cumulative, "storage_write_failed_batches"),
+            count(cumulative, "storage_write_incomplete_tokens"),
+            percentage(
+                cumulative,
+                "storage_write_incomplete_tokens",
+                "storage_write_requested_tokens",
+            ),
+            bandwidth_gbps(
+                cumulative, "storage_write_completed_tokens", uptime_seconds
+            ),
+            ack_lag_tokens,
+            queue_sizes["prefetch_q"],
+            queue_sizes["read_q"],
+            queue_sizes["backup_q"],
+            queue_sizes["ack_q"],
+            queue_sizes["release_q"],
+            self._storage_queue_sampled_peaks["prefetch_q"],
+            self._storage_queue_sampled_peaks["read_q"],
+            self._storage_queue_sampled_peaks["backup_q"],
+            self._storage_queue_sampled_peaks["ack_q"],
+            self._storage_queue_sampled_peaks["release_q"],
         )
 
     def terminate_prefetch(self, operation):
@@ -1079,6 +1430,7 @@ class HiCacheController:
         inc = 0
         for i in range(len(hash_values)):
             if not results[i]:
+                operation.storage_read_failed = True
                 logger.warning(
                     f"Prefetch operation {operation.request_id} failed to retrieve page {hash_values[i]}."
                 )
@@ -1093,9 +1445,11 @@ class HiCacheController:
         ]
         page_data = self.storage_backend.batch_get(hash_values, dummy_page_dst)
         if page_data is None:
+            operation.storage_read_failed = True
             return
         for i in range(len(hash_values)):
             if page_data[i] is None:
+                operation.storage_read_failed = True
                 logger.warning(
                     f"Prefetch operation {operation.request_id} failed to retrieve page {hash_values[i]}."
                 )
@@ -1150,13 +1504,23 @@ class HiCacheController:
                     continue
                 read_start = time.monotonic()
                 self._page_transfer(operation)
-                self.record_storage_stat(
-                    "storage_read_seconds", time.monotonic() - read_start
+                requested_tokens = len(operation.hash_value) * self.page_size
+                incomplete_tokens = max(
+                    0, requested_tokens - operation.completed_tokens
                 )
-                self.record_storage_stat("storage_read_count")
-                self.record_storage_stat(
-                    "prefetch_loaded_tokens", operation.completed_tokens
-                )
+                read_stats = {
+                    "storage_read_seconds": time.monotonic() - read_start,
+                    "storage_read_count": 1,
+                    "storage_read_requested_tokens": requested_tokens,
+                    "prefetch_loaded_tokens": operation.completed_tokens,
+                }
+                if incomplete_tokens > 0:
+                    read_stats["storage_read_incomplete_ops"] = 1
+                    read_stats["storage_read_incomplete_tokens"] = incomplete_tokens
+                if operation.storage_read_failed:
+                    read_stats["storage_read_failed_ops"] = 1
+                    read_stats["storage_read_failed_tokens"] = incomplete_tokens
+                self.record_storage_stats(read_stats)
                 # operation terminated by controller, release pre-allocated memory
                 self.append_host_mem_release(
                     operation.host_indices[operation.completed_tokens :]
@@ -1164,7 +1528,11 @@ class HiCacheController:
             except Empty:
                 continue
 
-    def prefetch_rate_limited(self) -> bool:
+    def prefetch_capacity_reached(self) -> bool:
+        with self._prefetch_budget_lock:
+            return self.prefetch_tokens_occupied >= self.prefetch_capacity_limit
+
+    def prefetch_rate_limited(self, candidate_tokens: Optional[int] = None) -> bool:
         """
         Rate limit the prefetching operations to avoid overwhelming the storage backend.
         """
@@ -1172,7 +1540,10 @@ class HiCacheController:
         with self._prefetch_budget_lock:
             rate_limited = self.prefetch_tokens_occupied >= self.prefetch_capacity_limit
         if rate_limited:
-            self.record_storage_stat("prefetch_rate_limited")
+            if candidate_tokens is None:
+                self.record_storage_stat("prefetch_rate_limited")
+            else:
+                self.record_prefetch_skip("rate_limited", candidate_tokens)
             return True
         # todo: more sophisticated rate limiting based on storage backend performance
         return False
@@ -1199,7 +1570,6 @@ class HiCacheController:
             if prefix_keys and len(prefix_keys) > 0:
                 prefix_keys += batch_hashes
 
-        self.record_storage_stat("storage_backend_hit_tokens", storage_query_count)
         return hash_value, storage_query_count
 
     def prefetch_thread_func(self):
@@ -1218,10 +1588,7 @@ class HiCacheController:
                     continue
                 query_start = time.monotonic()
                 hash_value, storage_hit_count = self._storage_hit_query(operation)
-                self.record_storage_stat(
-                    "storage_query_seconds", time.monotonic() - query_start
-                )
-                self.record_storage_stat("storage_query_count")
+                query_seconds = time.monotonic() - query_start
                 storage_hit_count_tensor = torch.tensor(
                     storage_hit_count, dtype=torch.int
                 )
@@ -1229,6 +1596,14 @@ class HiCacheController:
                     storage_hit_count_tensor, torch.distributed.ReduceOp.MIN
                 )
                 storage_hit_count = storage_hit_count_tensor.item()
+                self.record_storage_stats(
+                    {
+                        "storage_query_seconds": query_seconds,
+                        "storage_query_count": 1,
+                        "storage_query_candidate_tokens": len(operation.token_ids),
+                        "storage_backend_hit_tokens": storage_hit_count,
+                    }
+                )
 
                 # HiRadixCache uses query-first mode and supplies no host buffer
                 # until the continuous L3 hit length is known. Allocation and
@@ -1268,6 +1643,9 @@ class HiCacheController:
                     # not to prefetch if not enough benefits
                     self.prefetch_revoke_queue.put(operation.request_id)
                     self.append_host_mem_release(operation.host_indices)
+                    self.record_storage_stat(
+                        "prefetch_dropped_tokens", len(operation.token_ids)
+                    )
                     logger.debug(
                         f"Revoking prefetch for request {operation.request_id} due to insufficient hits ({storage_hit_count})."
                     )
@@ -1280,6 +1658,9 @@ class HiCacheController:
                         operation.host_indices[storage_hit_count:]
                     )
                     operation.host_indices = operation.host_indices[:storage_hit_count]
+                    self.record_storage_stat(
+                        "prefetch_allocated_tokens", storage_hit_count
+                    )
                     logger.debug(
                         f"Prefetching {len(operation.hash_value)} pages for request {operation.request_id}."
                     )
@@ -1393,8 +1774,9 @@ class HiCacheController:
 
     # Backup batch by batch
     def _page_backup(self, operation):
-        # Backup batch by batch
         prefix_keys = operation.prefix_keys
+        attempted_batches = 0
+        failed_batches = 0
         for i in range(0, len(operation.hash_value), STORAGE_BATCH_SIZE):
             batch_hashes = operation.hash_value[i : i + STORAGE_BATCH_SIZE]
             batch_host_indices = operation.host_indices[
@@ -1403,8 +1785,10 @@ class HiCacheController:
             # Set one batch token, and record if success.
             # todo: allow partial success
             extra_info = HiCacheStorageExtraInfo(prefix_keys=prefix_keys)
+            attempted_batches += 1
             success = self.page_set_func(batch_hashes, batch_host_indices, extra_info)
             if not success:
+                failed_batches += 1
                 logger.warning(
                     f"Write page to storage: {len(batch_hashes)} pages failed."
                 )
@@ -1417,6 +1801,7 @@ class HiCacheController:
             if prefix_keys and len(prefix_keys) > 0:
                 prefix_keys += batch_hashes
             operation.completed_tokens += self.page_size * len(batch_hashes)
+        return attempted_batches, failed_batches
 
     def backup_thread_func(self):
         """
@@ -1429,7 +1814,24 @@ class HiCacheController:
                     continue
 
                 if not self.backup_skip:
-                    self._page_backup(operation)
+                    write_start = time.monotonic()
+                    attempted_batches, failed_batches = self._page_backup(operation)
+                    requested_tokens = len(operation.hash_value) * self.page_size
+                    incomplete_tokens = max(
+                        0, requested_tokens - operation.completed_tokens
+                    )
+                    self.record_storage_stats(
+                        {
+                            "storage_write_seconds": time.monotonic() - write_start,
+                            "storage_write_count": 1,
+                            "storage_write_batches": attempted_batches,
+                            "storage_write_failed_batches": failed_batches,
+                            "storage_write_requested_tokens": requested_tokens,
+                            "storage_write_completed_tokens": operation.completed_tokens,
+                            "storage_write_incomplete_tokens": incomplete_tokens,
+                            "storage_write_failed_ops": int(failed_batches > 0),
+                        }
+                    )
                 self.ack_backup_queue.put(operation)
 
             except Empty:

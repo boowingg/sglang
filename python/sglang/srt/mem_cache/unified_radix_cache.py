@@ -1887,29 +1887,48 @@ class UnifiedRadixCache(KVCacheEventMixin, BasePrefixCache):
             is_bigram=self.is_eagle,
         ).page_aligned(self.page_size)
         prefetch_length = len(prefetch_key)
-        if (
-            prefetch_length < self.prefetch_threshold
-            or self.cache_controller.prefetch_rate_limited()
-        ):
+        attempt_candidate_tokens = prefetch_length
+        if prefetch_length < self.prefetch_threshold:
+            self.cache_controller.record_prefetch_skip(
+                "below_threshold", prefetch_length
+            )
+            return
+        if self.cache_controller.prefetch_rate_limited(prefetch_length):
             return
 
         anchor_lock_params = self.inc_host_lock_ref(last_host_node).to_dec_params()
         host_indices = self.cache_controller.mem_pool_host.alloc(prefetch_length)
         if host_indices is None:
+            self.cache_controller.record_storage_stat(
+                "prefetch_alloc_failed_before_evict"
+            )
             self.evict_host(prefetch_length)
             host_indices = self.cache_controller.mem_pool_host.alloc(prefetch_length)
         if host_indices is None:
+            self.cache_controller.record_storage_stat(
+                "prefetch_alloc_failed_after_evict"
+            )
             available_size = self.cache_controller.mem_pool_host.available_size()
             prefetch_length = available_size - (available_size % self.page_size)
             if prefetch_length >= self.prefetch_threshold:
+                self.cache_controller.record_storage_stat(
+                    "prefetch_capacity_trimmed_tokens",
+                    attempt_candidate_tokens - prefetch_length,
+                )
                 prefetch_key = prefetch_key[:prefetch_length]
                 host_indices = self.cache_controller.mem_pool_host.alloc(
                     prefetch_length
                 )
             else:
+                self.cache_controller.record_prefetch_skip(
+                    "allocation_failed", attempt_candidate_tokens
+                )
                 self.dec_host_lock_ref(last_host_node, anchor_lock_params)
                 return
         if host_indices is None:
+            self.cache_controller.record_prefetch_skip(
+                "allocation_failed", attempt_candidate_tokens
+            )
             self.dec_host_lock_ref(last_host_node, anchor_lock_params)
             return
 
@@ -1935,6 +1954,9 @@ class UnifiedRadixCache(KVCacheEventMixin, BasePrefixCache):
             CacheTransferPhase.PREFETCH, kv_xfer, comp_xfers
         )
         if alloc_failed:
+            self.cache_controller.record_prefetch_skip(
+                "aux_allocation_failed", attempt_candidate_tokens
+            )
             self.cache_controller.append_host_mem_release(
                 host_indices=host_indices,
                 extra_pools=[x for xfers in comp_xfers.values() for x in xfers],
@@ -1951,6 +1973,7 @@ class UnifiedRadixCache(KVCacheEventMixin, BasePrefixCache):
             last_hash,
             prefix_keys,
             extra_pools=aux_xfers or None,
+            attempt_candidate_tokens=attempt_candidate_tokens,
         )
         self.ongoing_prefetch[req_id] = _OngoingPrefetch(
             last_host_node,

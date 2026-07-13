@@ -568,6 +568,7 @@ class HybridCacheController(BaseHiCacheController):
         last_hash: Optional[str] = None,
         prefix_keys: Optional[List[str]] = None,
         extra_pools: Optional[list[PoolTransfer]] = None,
+        attempt_candidate_tokens: Optional[int] = None,
     ) -> PrefetchOperation:
         operation = PrefetchOperation(
             request_id,
@@ -577,8 +578,18 @@ class HybridCacheController(BaseHiCacheController):
             prefix_keys=prefix_keys,
             pool_transfers=extra_pools,
         )
-        self.record_storage_stat("prefetch_requests")
-        self.record_storage_stat("prefetch_candidate_tokens", len(new_input_tokens))
+        candidate_tokens = len(new_input_tokens)
+        if attempt_candidate_tokens is None:
+            attempt_candidate_tokens = candidate_tokens
+        stats = {
+            "prefetch_requests": 1,
+            "prefetch_candidate_tokens": candidate_tokens,
+        }
+        if attempt_candidate_tokens > candidate_tokens:
+            stats["prefetch_prequery_trimmed_tokens"] = (
+                attempt_candidate_tokens - candidate_tokens
+            )
+        self.record_storage_stats(stats)
         self.prefetch_queue.put(operation)
         return operation
 
@@ -620,9 +631,6 @@ class HybridCacheController(BaseHiCacheController):
 
         kv_hit_pages = hit_result.kv_hit_pages
         operation.pool_storage_result.update_kv_hit_pages(kv_hit_pages)
-        self.record_storage_stat(
-            "storage_backend_hit_tokens", kv_hit_pages * self.page_size
-        )
 
         return (
             hash_value[:kv_hit_pages],
@@ -682,7 +690,7 @@ class HybridCacheController(BaseHiCacheController):
             operation.pool_storage_result.update_extra_pool_hit_pages(results)
 
         # Backup kv pools
-        super()._page_backup(operation)
+        return super()._page_backup(operation)
 
     def _resolve_sidecar_derived_pool_transfers(self, operation):
         for transfer in operation.pool_transfers:

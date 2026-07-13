@@ -1741,12 +1741,16 @@ class HiMambaRadixCache(MambaRadixCache):
         prefetch_length = len(new_input_tokens) - (
             len(new_input_tokens) % self.page_size
         )
+        attempt_candidate_tokens = prefetch_length
         new_input_tokens = new_input_tokens[:prefetch_length]
-        if (
-            not self.enable_storage
-            or prefetch_length < self.prefetch_threshold
-            or self.cache_controller.prefetch_rate_limited()
-        ):
+        if not self.enable_storage:
+            return
+        if prefetch_length < self.prefetch_threshold:
+            self.cache_controller.record_prefetch_skip(
+                "below_threshold", prefetch_length
+            )
+            return
+        if self.cache_controller.prefetch_rate_limited(prefetch_length):
             return
 
         self._protect_host_node(last_host_node, protect_mamba=False)
@@ -1758,22 +1762,38 @@ class HiMambaRadixCache(MambaRadixCache):
             self.evict_host,
         )
         if host_indices is None:
+            self.cache_controller.record_storage_stat(
+                "prefetch_alloc_failed_after_evict"
+            )
             # truncate the prefetch length to the page-aligned available host size
             available_size = self.cache_controller.mem_pool_host.available_size()
             prefetch_length = available_size - (available_size % self.page_size)
             if prefetch_length < self.prefetch_threshold:
+                self.cache_controller.record_prefetch_skip(
+                    "allocation_failed", attempt_candidate_tokens
+                )
                 self._release_host_node(last_host_node, release_mamba=False)
                 return
+            self.cache_controller.record_storage_stat(
+                "prefetch_capacity_trimmed_tokens",
+                attempt_candidate_tokens - prefetch_length,
+            )
             new_input_tokens = new_input_tokens[:prefetch_length]
             host_indices = self.cache_controller.mem_pool_host.alloc(prefetch_length)
 
         if host_indices is None:
+            self.cache_controller.record_prefetch_skip(
+                "allocation_failed", attempt_candidate_tokens
+            )
             self._release_host_node(last_host_node, release_mamba=False)
             return
 
         # Allocate host mamba slot
         extra_pools = self.mamba_prefetch_alloc(new_input_tokens, last_hash)
         if extra_pools is None:
+            self.cache_controller.record_prefetch_skip(
+                "aux_allocation_failed", attempt_candidate_tokens
+            )
             self.cache_controller.mem_pool_host.free(host_indices)
             self._release_host_node(last_host_node, release_mamba=False)
             return
@@ -1790,6 +1810,7 @@ class HiMambaRadixCache(MambaRadixCache):
             last_hash,
             prefix_keys,
             extra_pools=extra_pools,
+            attempt_candidate_tokens=attempt_candidate_tokens,
         )
         self.ongoing_prefetch[req_id] = (
             last_host_node,

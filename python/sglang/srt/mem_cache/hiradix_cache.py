@@ -1453,7 +1453,18 @@ class HiRadixCache(RadixCache):
         last_hash: Optional[str] = None,
         prefix_keys: Optional[List[str]] = None,
     ) -> int:
-        if not self.enable_storage or self.cache_controller.prefetch_rate_limited():
+        if not self.enable_storage:
+            return 0
+        if self.cache_controller.prefetch_capacity_reached():
+            candidate_tokens = len(new_input_tokens) - (
+                len(new_input_tokens) % self.page_size
+            )
+            self.cache_controller.record_storage_stats(
+                {
+                    "storage_probe_rate_limited": 1,
+                    "storage_probe_rate_limited_tokens": candidate_tokens,
+                }
+            )
             return 0
 
         prefetch_key = RadixKey(
@@ -1461,7 +1472,14 @@ class HiRadixCache(RadixCache):
             extra_key=last_host_node.key.extra_key,
             is_bigram=self.is_eagle,
         ).page_aligned(self.page_size)
-        if len(prefetch_key) < self.prefetch_threshold:
+        candidate_tokens = len(prefetch_key)
+        if candidate_tokens < self.prefetch_threshold:
+            self.cache_controller.record_storage_stats(
+                {
+                    "storage_probe_below_threshold": 1,
+                    "storage_probe_below_threshold_tokens": candidate_tokens,
+                }
+            )
             return 0
 
         prefetch_op_cls = (
@@ -1480,15 +1498,25 @@ class HiRadixCache(RadixCache):
             prefix_keys,
             **extra_kwargs,
         )
-        hash_values, storage_hit_count = self.cache_controller._storage_hit_query(
+        query_start = time.monotonic()
+        _hash_values, storage_hit_count = self.cache_controller._storage_hit_query(
             operation
         )
+        query_seconds = time.monotonic() - query_start
         storage_hit_count_tensor = torch.tensor(storage_hit_count, dtype=torch.int)
         self._all_reduce_attn_groups(
             storage_hit_count_tensor, torch.distributed.ReduceOp.MIN
         )
         storage_hit_count = storage_hit_count_tensor.item()
         storage_hit_count = storage_hit_count - (storage_hit_count % self.page_size)
+        self.cache_controller.record_storage_stats(
+            {
+                "storage_probe_count": 1,
+                "storage_probe_candidate_tokens": candidate_tokens,
+                "storage_probe_hit_tokens": storage_hit_count,
+                "storage_probe_seconds": query_seconds,
+            }
+        )
         return storage_hit_count
 
     def ready_to_load_host_cache(self) -> int:
@@ -1724,11 +1752,14 @@ class HiRadixCache(RadixCache):
         # align the number of fetching tokens to the page size
         prefetch_key = prefetch_key.page_aligned(self.page_size)
         prefetch_length = len(prefetch_key)
-        if (
-            not self.enable_storage
-            or prefetch_length < self.prefetch_threshold
-            or self.cache_controller.prefetch_rate_limited()
-        ):
+        if not self.enable_storage:
+            return
+        if prefetch_length < self.prefetch_threshold:
+            self.cache_controller.record_prefetch_skip(
+                "below_threshold", prefetch_length
+            )
+            return
+        if self.cache_controller.prefetch_rate_limited(prefetch_length):
             return
 
         last_host_node.protect_host()
@@ -1791,6 +1822,9 @@ class HiRadixCache(RadixCache):
         if host_indices is None or allocated < self.prefetch_threshold:
             if host_indices is not None:
                 self.cache_controller.mem_pool_host.free(host_indices)
+            self.cache_controller.record_prefetch_loss(
+                "staging_allocation_failed", requested
+            )
             self.cache_controller.record_storage_stat(
                 "prefetch_dropped_tokens", requested
             )
