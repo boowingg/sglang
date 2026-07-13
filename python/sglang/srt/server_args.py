@@ -2066,6 +2066,13 @@ class ServerArgs:
             choices=["write_back", "write_through", "write_through_selective"],
         ),
     ] = "write_through"
+    hicache_host_memory_mode: A[
+        str,
+        Arg(
+            help="How hierarchical cache uses host memory. 'cache' keeps reusable L2 entries; 'buffer_only' uses host memory only for in-flight L1/L3 transfers.",
+            choices=["cache", "buffer_only"],
+        ),
+    ] = "cache"
     hicache_io_backend: A[
         str,
         Arg(
@@ -5661,12 +5668,33 @@ class ServerArgs:
         1) Layout <-> I/O compatibility for direct conflicts.
         2) Storage <-> layout compatibility (may rewrite layout).
         """
+        if (
+            self.hicache_host_memory_mode == "buffer_only"
+            and not self.enable_hierarchical_cache
+        ):
+            raise ValueError(
+                "--hicache-host-memory-mode buffer_only requires "
+                "--enable-hierarchical-cache."
+            )
+
         # Skip all normalization when neither hicache nor decode-offload path is active.
         if not (
             self.enable_hierarchical_cache
             or self.disaggregation_decode_enable_offload_kvcache
         ):
             return
+
+        if self.hicache_host_memory_mode == "buffer_only":
+            if self.hicache_storage_backend is None:
+                raise ValueError(
+                    "--hicache-host-memory-mode buffer_only requires an L3 "
+                    "storage backend configured by --hicache-storage-backend."
+                )
+            if self.hicache_write_policy != "write_through":
+                raise ValueError(
+                    "--hicache-host-memory-mode buffer_only currently requires "
+                    "--hicache-write-policy write_through."
+                )
 
         # Step 1: Initial layout-io compatibility normalization.
         self._resolve_layout_io_compatibility()

@@ -867,6 +867,44 @@ class TestHiCacheArgs(unittest.TestCase):
         self.assertEqual(args.hicache_mem_layout, "page_first")
         self.assertIsNone(args.decode_attention_backend)
 
+    def test_buffer_only_requires_hierarchical_cache(self):
+        args = self._make_args(hicache_host_memory_mode="buffer_only")
+
+        with self.assertRaisesRegex(ValueError, "enable-hierarchical-cache"):
+            args._handle_hicache()
+
+    def test_buffer_only_requires_storage_backend(self):
+        args = self._make_args(
+            enable_hierarchical_cache=True,
+            hicache_host_memory_mode="buffer_only",
+        )
+
+        with self.assertRaisesRegex(ValueError, "hicache-storage-backend"):
+            args._handle_hicache()
+
+    def test_buffer_only_requires_write_through(self):
+        args = self._make_args(
+            enable_hierarchical_cache=True,
+            hicache_host_memory_mode="buffer_only",
+            hicache_storage_backend="file",
+            hicache_write_policy="write_back",
+        )
+
+        with self.assertRaisesRegex(ValueError, "write_through"):
+            args._handle_hicache()
+
+    def test_buffer_only_accepts_supported_configuration(self):
+        args = self._make_args(
+            enable_hierarchical_cache=True,
+            hicache_host_memory_mode="buffer_only",
+            hicache_storage_backend="file",
+            hicache_write_policy="write_through",
+        )
+
+        args._handle_hicache()
+
+        self.assertEqual(args.hicache_host_memory_mode, "buffer_only")
+
 
 class TestNgramExternalSamArgs(CustomTestCase):
     def _make_dummy_ngram_args(self, **overrides):
