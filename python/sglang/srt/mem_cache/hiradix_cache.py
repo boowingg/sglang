@@ -1310,22 +1310,80 @@ class HiRadixCache(RadixCache):
             _, finish_event, ack_list = self.cache_controller.ack_load_queue.pop(0)
             finish_event.synchronize()
             for ack_id in ack_list:
-                entry = self.ongoing_load_back.pop(ack_id)
-                if isinstance(entry, LoadBackContext):
-                    for node in entry.host_nodes:
-                        node.device_loading = False
-                        self._record_store_event(node, medium=StorageMedium.GPU)
-                        node.release_host()
-                        if node.host_value_transient and node.host_value is not None:
-                            self._forget_transient_host_node(node)
-                            self.cache_controller.mem_pool_host.free(node.host_value)
-                            node.host_value = None
-                            node.host_value_transient = False
-                            self._update_host_leaf_status(node)
-                    self.dec_lock_ref(entry.end_node)
-                else:
-                    self.dec_lock_ref(entry)
+                self._finish_load_back_ack(ack_id)
             finish_count -= 1
+
+    def _finish_load_back_ack(self, ack_id: int) -> None:
+        entry = self.ongoing_load_back.pop(ack_id, None)
+        if entry is None:
+            return
+        if isinstance(entry, LoadBackContext):
+            for node in entry.host_nodes:
+                node.device_loading = False
+                self._record_store_event(node, medium=StorageMedium.GPU)
+                node.release_host()
+                if node.host_value_transient and node.host_value is not None:
+                    self._forget_transient_host_node(node)
+                    self.cache_controller.mem_pool_host.free(node.host_value)
+                    node.host_value = None
+                    node.host_value_transient = False
+                    self._update_host_leaf_status(node)
+            self.dec_lock_ref(entry.end_node)
+        else:
+            self.dec_lock_ref(entry)
+
+    def _synchronize_loading_prefix(self, key: RadixKey) -> None:
+        if not self.ongoing_load_back:
+            return
+        loading_node_to_ack = {}
+        for ack_id, entry in self.ongoing_load_back.items():
+            if isinstance(entry, LoadBackContext):
+                for node in entry.host_nodes:
+                    loading_node_to_ack[node] = ack_id
+        if not loading_node_to_ack:
+            return
+
+        needed_ack_ids = set()
+        node = self.root_node
+        remaining_key = key
+        while len(remaining_key) > 0:
+            child_key = remaining_key.child_key(self.page_size)
+            child = node.children.get(child_key)
+            if child is None:
+                break
+            if child.device_loading:
+                ack_id = loading_node_to_ack.get(child)
+                if ack_id is not None:
+                    needed_ack_ids.add(ack_id)
+            prefix_len = child.key.match(remaining_key, page_size=self.page_size)
+            if prefix_len < len(child.key):
+                break
+            remaining_key = remaining_key[prefix_len:]
+            node = child
+
+        if not needed_ack_ids:
+            return
+
+        finish_through = -1
+        for index, (_, _, ack_list) in enumerate(
+            self.cache_controller.ack_load_queue
+        ):
+            if needed_ack_ids.intersection(ack_list):
+                finish_through = index
+        if finish_through < 0:
+            logger.error(
+                "Missing load-back completion event for radix nodes: %s",
+                sorted(needed_ack_ids),
+            )
+            return
+
+        # The load stream is FIFO. Completing through the latest matching event
+        # also makes every earlier event safe to retire locally.
+        for _ in range(finish_through + 1):
+            _, finish_event, ack_list = self.cache_controller.ack_load_queue.pop(0)
+            finish_event.synchronize()
+            for ack_id in ack_list:
+                self._finish_load_back_ack(ack_id)
 
     def is_load_back_event_done(self, consumer_index: int) -> bool:
         """Return True after the local load-back event is complete."""
@@ -1857,6 +1915,19 @@ class HiRadixCache(RadixCache):
         if not self.transient_host_nodes_by_reqid[req_id]:
             self.transient_host_nodes_by_reqid.pop(req_id, None)
 
+    def _release_recomputed_transient_host_value(self, node: TreeNode) -> None:
+        if (
+            not self.buffer_only
+            or not node.host_value_transient
+            or node.host_value is None
+            or node.device_loading
+        ):
+            return
+        self._forget_transient_host_node(node)
+        self.cache_controller.mem_pool_host.free(node.host_value)
+        node.host_value = None
+        node.host_value_transient = False
+
     def _release_transient_host_nodes(self, req_id: str) -> None:
         nodes = self.transient_host_nodes_by_reqid.pop(req_id, [])
         for node in reversed(nodes):
@@ -2140,6 +2211,14 @@ class HiRadixCache(RadixCache):
             host_hit_length=host_hit_length,
         )
 
+    def cache_unfinished_req(self, req, chunked=False):
+        if self.ongoing_load_back:
+            key = RadixKey(
+                req.get_fill_ids(), req.extra_key, is_bigram=self.is_eagle
+            ).page_aligned(self.page_size)
+            self._synchronize_loading_prefix(key)
+        return super().cache_unfinished_req(req, chunked=chunked)
+
     def prefetch_from_storage(
         self,
         req_id: str,
@@ -2404,6 +2483,7 @@ class HiRadixCache(RadixCache):
                     # change the reference if the node is evicted
                     # this often happens in the case of KV cache recomputation
                     node.value = value[:prefix_len].clone()
+                    self._release_recomputed_transient_host_value(node)
                     self.evictable_size_ += len(node.value)
                     self._update_leaf_status(node)
                     self._update_host_leaf_status(node)
@@ -2419,6 +2499,7 @@ class HiRadixCache(RadixCache):
                 new_node.priority = max(new_node.priority, priority)
                 if new_node.evicted:
                     new_node.value = value[:prefix_len].clone()
+                    self._release_recomputed_transient_host_value(new_node)
                     self.evictable_size_ += len(new_node.value)
                     self._update_leaf_status(new_node)
                     self._update_host_leaf_status(new_node)
