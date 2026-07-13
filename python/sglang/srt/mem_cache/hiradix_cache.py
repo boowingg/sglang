@@ -1479,6 +1479,42 @@ class HiRadixCache(RadixCache):
         if p is not self.root_node and all(c.evicted for c in p.children.values()):
             heapq.heappush(heap, (self.eviction_strategy.get_priority(p), p))
 
+    def _drop_unprotected_transient_host_descendants(self, node: TreeNode) -> bool:
+        """Detach idle L3-prefetched descendants before evicting a GPU node.
+
+        Pure buffer mode permits a GPU node to have host-only descendants, so a
+        device leaf is not necessarily a structural tree leaf.
+        """
+        descendants = []
+        stack = list(node.children.values())
+        while stack:
+            current = stack.pop()
+            descendants.append(current)
+            stack.extend(current.children.values())
+
+        if any(
+            not current.evicted
+            or not current.host_value_transient
+            or current.host_value is None
+            or current.device_loading
+            or current.host_ref_counter > 0
+            or current.lock_ref > 0
+            for current in descendants
+        ):
+            return False
+
+        for current in reversed(descendants):
+            self._forget_transient_host_node(current)
+            self.cache_controller.mem_pool_host.free(current.host_value)
+            current.host_value = None
+            current.host_value_transient = False
+            self.evictable_host_leaves.discard(current)
+            self.evictable_leaves.discard(current)
+        node.children.clear()
+        self._update_leaf_status(node)
+        self._update_host_leaf_status(node)
+        return True
+
     def _evict_write_through(self, num_tokens: int) -> int:
         """write_through / write_through_selective: drop non-backuped leaves,
         demote already-backuped ones. Nothing is staged to host during eviction,
@@ -1489,6 +1525,13 @@ class HiRadixCache(RadixCache):
         while num_evicted < num_tokens and heap:
             _, x = heapq.heappop(heap)
             if x.lock_ref > 0 or (self.buffer_only and x.host_ref_counter > 0):
+                continue
+            if (
+                self.buffer_only
+                and x.children
+                and not x.backuped
+                and not self._drop_unprotected_transient_host_descendants(x)
+            ):
                 continue
             if x.backuped:
                 num_evicted += self._evict_backuped(x)

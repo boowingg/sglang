@@ -192,6 +192,91 @@ class TestHiCacheBufferOnly(unittest.TestCase):
         self.assertFalse(child.host_value_transient)
         self.assertNotIn("req", cache.transient_host_nodes_by_reqid)
 
+    def test_device_eviction_drops_unprotected_transient_host_subtree(self):
+        cache = HiRadixCache.__new__(HiRadixCache)
+        cache.page_size = 2
+        cache.buffer_only = True
+        cache.evictable_size_ = 2
+        cache.protected_size_ = 0
+        cache.evictable_leaves = set()
+        cache.evictable_host_leaves = set()
+        cache.transient_host_nodes_by_reqid = {}
+        cache.eviction_strategy = SimpleNamespace(
+            get_priority=lambda node: node.id
+        )
+        cache._record_remove_event = MagicMock()
+        cache._discard_session_leaf = MagicMock()
+        mem_pool_host = MagicMock()
+        mem_pool_device_allocator = MagicMock()
+        cache.cache_controller = SimpleNamespace(
+            mem_pool_host=mem_pool_host,
+            mem_pool_device_allocator=mem_pool_device_allocator,
+        )
+
+        root = _node([], values=[])
+        root.lock_ref = 1
+        parent = _node([1, 2], parent=root, values=[10, 11])
+        child = _node([3, 4], parent=parent)
+        child.host_value = torch.arange(2)
+        child.host_value_transient = True
+        child.transient_owner_req_id = "req"
+        root.children[parent.key.child_key(cache.page_size)] = parent
+        parent.children[child.key.child_key(cache.page_size)] = child
+        cache.root_node = root
+        cache.evictable_host_leaves.add(child)
+        cache.transient_host_nodes_by_reqid["req"] = [child]
+        cache._update_leaf_status(parent)
+
+        num_evicted = cache._evict_write_through(2)
+
+        self.assertEqual(num_evicted, 2)
+        mem_pool_host.free.assert_called_once()
+        mem_pool_device_allocator.free.assert_called_once()
+        self.assertEqual(parent.children, {})
+        self.assertNotIn(parent.key.child_key(cache.page_size), root.children)
+        self.assertNotIn("req", cache.transient_host_nodes_by_reqid)
+
+    def test_device_eviction_preserves_referenced_transient_host_subtree(self):
+        cache = HiRadixCache.__new__(HiRadixCache)
+        cache.page_size = 2
+        cache.buffer_only = True
+        cache.evictable_leaves = set()
+        cache.evictable_host_leaves = set()
+        cache.transient_host_nodes_by_reqid = {}
+        cache.eviction_strategy = SimpleNamespace(
+            get_priority=lambda node: node.id
+        )
+        mem_pool_host = MagicMock()
+        mem_pool_device_allocator = MagicMock()
+        cache.cache_controller = SimpleNamespace(
+            mem_pool_host=mem_pool_host,
+            mem_pool_device_allocator=mem_pool_device_allocator,
+        )
+
+        root = _node([], values=[])
+        root.lock_ref = 1
+        parent = _node([1, 2], parent=root, values=[10, 11])
+        child = _node([3, 4], parent=parent)
+        child.host_value = torch.arange(2)
+        child.host_value_transient = True
+        child.protect_host()
+        root.children[parent.key.child_key(cache.page_size)] = parent
+        parent.children[child.key.child_key(cache.page_size)] = child
+        cache.root_node = root
+        cache._update_leaf_status(parent)
+
+        num_evicted = cache._evict_write_through(2)
+
+        self.assertEqual(num_evicted, 0)
+        mem_pool_host.free.assert_not_called()
+        mem_pool_device_allocator.free.assert_not_called()
+        self.assertIs(
+            root.children[parent.key.child_key(cache.page_size)], parent
+        )
+        self.assertIs(
+            parent.children[child.key.child_key(cache.page_size)], child
+        )
+
     def test_split_propagates_pending_write_and_storage_state(self):
         cache = HiRadixCache.__new__(HiRadixCache)
         cache.page_size = 2
