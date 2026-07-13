@@ -83,6 +83,23 @@ The write-back mechanism is responsible for moving frequently accessed KV caches
 
 **Cross-instance Sharing**: When data is written back from L2 to L3, only data not already present in L3 is transferred. KV caches stored in L3 can then be shared across all SGLang instances in the cluster (depending on the L3 backend implementation), significantly improving cache hit rates within the same memory budget.
 
+### L2 Buffer-only Mode
+
+`--hicache-host-memory-mode buffer_only` uses host memory only as a bounded
+transfer buffer between L1 and L3. L1 writes retain their temporary host pages
+until L3 acknowledges them; L3 reads query the exact hit length before
+allocating pages and release those pages after asynchronous H2D completes.
+
+Reads and writes share one pool. Reads preserve a 20% soft write reserve while
+writes are pending, but may borrow the full pool when there is no write
+pressure. Queued query tokens are capped at one host-pool capacity to avoid
+unbounded L3 metadata pressure. L2 residency and L3 durability are tracked independently, so partial
+or failed writes never publish an unacknowledged suffix.
+
+The initial implementation supports Python `HiRadixCache`, MHA/GQA KV pools,
+startup L3 configuration, and `write_through`. Unsupported cache types, write
+policies, and runtime L3 detach are rejected explicitly.
+
 ### Multi-Rank Synchronization
 
 During multi-GPU parallel computation, such as tensor parallelism (TP), HiCache must ensure consistent states across different ranks. Therefore, critical computation steps require the use of `all_reduce` for state synchronization.
@@ -132,9 +149,9 @@ Specifically, **LMCache**, an efficient KV cache layer for enterprise-scale LLM 
 
 - **`--enable-hierarchical-cache`**: Enable hierarchical cache functionality. This is required to use HiCache.
 
-- **`--hicache-ratio HICACHE_RATIO`**: The ratio of the size of host KV cache memory pool to the size of device pool. For example, a value of 2 means the host memory pool is twice as large as the device memory pool. The value of this parameter must be greater than 1, as the current implementation requires the host memory allocated for the KV cache to be larger than the device memory allocated for the KV cache.
+- **`--hicache-ratio HICACHE_RATIO`**: The ratio of host KV cache size to device-pool size. A ratio above 1 remains recommended for the default `cache` mode. `buffer_only` may use a smaller ratio because host memory does not retain an L1-sized replica.
 
-- **`--hicache-size HICACHE_SIZE`**: The size of host KV cache memory pool in gigabytes. This parameter overrides `hicache-ratio` if set. For example, `--hicache-size 30` allocates 30GB (1GB = 1e9 bytes) for the host memory pool **for each rank**. If there are 8 ranks, then the total memory size is 240GB. Just like `hicache-ratio`, the value of this parameter must be larger than the size of device memory allocated for KV cache.
+- **`--hicache-size HICACHE_SIZE`**: The host KV cache size in gigabytes per rank. It overrides `hicache-ratio`. In `buffer_only` mode this controls transfer concurrency rather than retained L2 coverage and may be smaller than L1.
 
 **Note**: `--hicache-ratio` and `--hicache-size` are two critical parameters. In general, a larger HiCache size leads to a higher cache hit rate, which improves prefill performance. However, the relationship between cache size and hit rate is not linear. Once most reusable KV data—especially hot tokens—are already cached, further increasing the size may yield only marginal performance gains. Users can set these parameters based on their workload characteristics and performance requirements.
 
@@ -149,6 +166,8 @@ Specifically, **LMCache**, an efficient KV cache layer for enterprise-scale LLM 
   - `write_through`: Immediately writes data to all tiers (strongest caching benefits)
   - `write_through_selective`: Uses hit-count tracking to back up only frequently accessed data
   - `write_back`: Writes data back to slower tiers only when eviction is needed (reduces I/O load)
+
+- **`--hicache-host-memory-mode {cache,buffer_only}`**: Controls whether host memory keeps reusable L2 entries or only in-flight L1/L3 transfers. `buffer_only` requires an L3 backend, `write_through`, and MHA/GQA `HiRadixCache`.
 
 - **`--hicache-io-backend {direct,kernel}`**: Choose the I/O backend for KV cache transfer between CPU and GPU. See [Data Transfer Optimization](#data-transfer-optimization) for details.
   - `direct`: Standard CUDA memory copy operations

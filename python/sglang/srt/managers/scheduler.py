@@ -2289,8 +2289,21 @@ class Scheduler(
     def _prefetch_kvcache(self, req: Req):
         if self.enable_hicache_storage:
             req.init_next_round_input(self.tree_cache, cow_mamba=False)
-            last_host_node = req.last_host_node
-            if last_host_node.backuped or last_host_node is self.tree_cache.root_node:
+            buffer_only = getattr(self.tree_cache, "buffer_only", False)
+            if buffer_only:
+                last_host_node = (
+                    req.last_host_node
+                    if req.host_hit_length > 0
+                    else req.last_node
+                )
+            else:
+                last_host_node = req.last_host_node
+            can_anchor_prefetch = (
+                last_host_node.backuped
+                or last_host_node is self.tree_cache.root_node
+                or (buffer_only and not last_host_node.evicted)
+            )
+            if can_anchor_prefetch:
                 last_hash = last_host_node.get_last_hash_value()
                 matched_len = len(req.prefix_indices) + req.host_hit_length
                 match_end = req._compute_max_prefix_len(

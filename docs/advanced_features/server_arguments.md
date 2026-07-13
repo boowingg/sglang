@@ -357,6 +357,7 @@ Please consult the documentation below and [server_args.py](https://github.com/s
 | `--hicache-ratio` | The ratio of the size of host KV cache memory pool to the size of device pool. | `2.0` | Type: float |
 | `--hicache-size` | The size of host KV cache memory pool in gigabytes, which will override the hicache_ratio if set. | `0` | Type: int |
 | `--hicache-write-policy` | The write policy of hierarchical cache. | `write_through` | `write_back`, `write_through`, `write_through_selective` |
+| `--hicache-host-memory-mode` | How hierarchical cache uses host memory. `buffer_only` keeps only in-flight L1/L3 transfers. | `cache` | `cache`, `buffer_only` |
 | `--hicache-io-backend` | The IO backend for KV cache transfer between CPU and GPU | `kernel` | `direct`, `kernel`, `kernel_ascend` |
 | `--hicache-mem-layout` | The layout of host memory pool for hierarchical cache. | `layer_first` | `layer_first`, `page_first`, `page_first_direct`, `page_first_kv_split`, `page_head` |
 | `--hicache-storage-backend` | The storage backend for hierarchical KV cache. Built-in backends: file, mooncake, hf3fs, nixl, aibrix. For dynamic backend, use --hicache-storage-backend-extra-config to specify: backend_name (custom name), module_path (Python module path), class_name (backend class name). | `None` | `file`, `mooncake`, `hf3fs`, `nixl`, `aibrix`, `dynamic`, `eic` |

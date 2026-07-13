@@ -233,6 +233,13 @@ class TreeNode:
         self.host_ref_counter = 0
         # store the host indices of KV cache
         self.host_value: Optional[torch.Tensor] = None
+        # buffer-only mode may publish a host entry only for an in-flight H2D.
+        self.host_value_transient = False
+        self.transient_owner_req_id: Optional[str] = None
+        # Number of leading tokens durably acknowledged by L3.
+        self.storage_backed_tokens = 0
+        # A device value undergoing H2D must not be matched before DMA completes.
+        self.device_loading = False
         self.write_through_pending_id: Optional[int] = None
         # store hash values of each pages
         self.hash_value: Optional[List[str]] = None
@@ -249,6 +256,10 @@ class TreeNode:
     @property
     def backuped(self):
         return self.host_value is not None
+
+    @property
+    def storage_backed(self):
+        return self.parent is None or self.storage_backed_tokens >= len(self.key)
 
     def protect_host(self):
         """Protect the host value from eviction."""

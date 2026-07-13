@@ -79,8 +79,11 @@ def default_radix_cache_factory(ctx: TreeCacheBuildContext) -> BasePrefixCache:
     """Built-in Radix Cache selection chain."""
     server_args = ctx.server_args
     params = ctx.params
+    buffer_only = server_args.hicache_host_memory_mode == "buffer_only"
 
     if ctx.effective_chunked_prefill_size is not None and ctx.disable_radix_cache:
+        if buffer_only:
+            raise ValueError("HiCache buffer_only requires the Python radix cache.")
         if not ctx.is_hybrid_swa:
             from sglang.srt.mem_cache.chunk_cache import ChunkCache
 
@@ -94,6 +97,8 @@ def default_radix_cache_factory(ctx: TreeCacheBuildContext) -> BasePrefixCache:
         return SWAChunkCache(params)
 
     if envs.SGLANG_EXPERIMENTAL_CPP_RADIX_TREE.get():
+        if buffer_only:
+            raise ValueError("HiCache buffer_only does not support the C++ radix tree.")
         # lazy import to avoid JIT overhead
         from sglang.srt.mem_cache.radix_cache_cpp import RadixCacheCpp
 
@@ -101,10 +106,16 @@ def default_radix_cache_factory(ctx: TreeCacheBuildContext) -> BasePrefixCache:
         return RadixCacheCpp(params=params, server_args=server_args)
 
     if envs.SGLANG_ENABLE_UNIFIED_RADIX_TREE.get() or use_mlx():
+        if buffer_only:
+            raise ValueError("HiCache buffer_only does not support UnifiedRadixCache.")
         return _create_unified_radix_cache(ctx, server_args, params)
 
     if ctx.enable_hierarchical_cache:
         if ctx.is_hybrid_ssm or ctx.is_hybrid_swa:
+            if buffer_only:
+                raise ValueError(
+                    "HiCache buffer_only does not support hybrid SSM/SWA caches."
+                )
             # HybridModel launches HiCache via UnifiedRadixCache by default.
             return _create_unified_radix_cache(ctx, server_args, params)
         else:
@@ -199,6 +210,10 @@ def create_tree_cache(ctx: TreeCacheBuildContext) -> BasePrefixCache:
     """Route to the matching factory to construct Radix Cache."""
     name = ctx.server_args.radix_cache_backend
     if name:
+        if ctx.server_args.hicache_host_memory_mode == "buffer_only":
+            raise ValueError(
+                "HiCache buffer_only does not support custom radix-cache backends."
+            )
         factory = get_radix_cache_factory(name)
         if factory is None:
             raise ValueError(
