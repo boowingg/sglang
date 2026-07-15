@@ -73,6 +73,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_BUFFER_WRITE_STALE = 0
+_BUFFER_WRITE_DEFER = 1
+_BUFFER_WRITE_D2H = 2
+_BUFFER_WRITE_INVALID = 3
+_BUFFER_WRITE_IN_FLIGHT = 4
+_BUFFER_WRITE_L3_RETRY = 5
+
 
 @dataclass
 class WriteThroughContext:
@@ -85,6 +92,13 @@ class WriteThroughContext:
     hash_value: Optional[List[str]] = None
     prefix_keys: Optional[List[str]] = None
     storage_operation_id: Optional[int] = None
+    durable_tokens: int = 0
+    inflight_offset: int = 0
+    inflight_tokens: int = 0
+    host_data_ready: bool = False
+    source_locked: bool = False
+    retry_count: int = 0
+    retry_at: float = 0.0
 
 
 @dataclass
@@ -97,12 +111,14 @@ class LoadBackContext:
 class PrefetchContext:
     anchor: TreeNode
     key: RadixKey
-    operation: PrefetchOperation
+    operation: Optional[PrefetchOperation] = None
     host_indices: Optional[torch.Tensor] = None
     allocated_tokens: int = 0
     anchor_device_locked: bool = False
     aborted: bool = False
     query_tokens_reserved: int = 0
+    last_hash: Optional[str] = None
+    prefix_keys: Optional[List[str]] = None
 
 
 class HiRadixCache(RadixCache):
@@ -240,13 +256,16 @@ class HiRadixCache(RadixCache):
         self.ongoing_write_through = {}
         # record the node segments with ongoing load back
         self.ongoing_load_back = {}
+        self.loading_node_to_ack: Dict[TreeNode, int] = {}
         # record the ongoing prefetch requests
         self.ongoing_prefetch = {}
         self.ongoing_backup = {}
         self.pending_write_through = deque()
+        self.pending_prefetch_query = deque()
         self.pending_prefetch_alloc = deque()
         self.transient_host_nodes_by_reqid: Dict[str, List[TreeNode]] = {}
         self.buffer_write_reserve_ratio = 0.2
+        self.buffer_write_dispatch_limit = 64
         self.buffer_query_tokens_occupied = 0
         # track per-request tokens loaded from storage (L3 hits)
         # key: request_id, value: number of tokens actually loaded from storage
@@ -602,12 +621,11 @@ class HiRadixCache(RadixCache):
                         info, free_completed=True, free_all_host=True
                     )
                 except Exception:
-                    logger.exception(
-                        "Failed to release prefetch context %s", req_id
-                    )
+                    logger.exception("Failed to release prefetch context %s", req_id)
                 self.ongoing_prefetch.pop(req_id, None)
         except Exception:
             logger.exception("Force release pending prefetch ops failed.")
+        self.pending_prefetch_query.clear()
         self.pending_prefetch_alloc.clear()
 
         # Force release leftover backup ops and their owned host pages.
@@ -635,13 +653,6 @@ class HiRadixCache(RadixCache):
                 if context.host_indices is not None:
                     cc.mem_pool_host.free(context.host_indices)
                     context.host_indices = None
-                    try:
-                        self.dec_lock_ref(context.lock_node)
-                    except Exception:
-                        logger.exception(
-                            "Failed to release write-through lock %s",
-                            context.write_id,
-                        )
                 self._drop_pending_buffer_write(context)
         self.pending_write_through.clear()
 
@@ -702,6 +713,15 @@ class HiRadixCache(RadixCache):
                 ack_id = operation.id
                 entry = self.ongoing_backup.pop(ack_id, None)
                 if isinstance(entry, WriteThroughContext):
+                    if (
+                        entry.host_indices is None
+                        or not entry.host_data_ready
+                        or entry.inflight_tokens <= 0
+                        or entry.inflight_offset != entry.durable_tokens
+                    ):
+                        raise RuntimeError(
+                            f"Buffer-only L3 ACK {ack_id} has invalid write state"
+                        )
                     if n_backup is not None:
                         completed_tokens = torch.tensor(
                             operation.completed_tokens, dtype=torch.int
@@ -710,19 +730,37 @@ class HiRadixCache(RadixCache):
                             completed_tokens, torch.distributed.ReduceOp.MIN
                         )
                         operation.completed_tokens = int(completed_tokens.item())
-                    remaining = min(operation.completed_tokens, entry.backup_len)
-                    for node in entry.publish_nodes:
-                        completed = min(len(node.key), remaining)
-                        node.storage_backed_tokens = max(
-                            node.storage_backed_tokens, completed
-                        )
-                        remaining -= completed
-                        if node.write_through_pending_id == entry.write_id:
-                            node.write_through_pending_id = None
-                    if entry.host_indices is not None:
-                        cc.mem_pool_host.free(entry.host_indices)
+                    completed = min(
+                        max(0, operation.completed_tokens),
+                        entry.inflight_tokens,
+                    )
+                    completed -= completed % self.page_size
+                    operation.completed_tokens = completed
+                    entry.durable_tokens = entry.inflight_offset + completed
+                    self._mark_buffer_write_durable(entry, entry.durable_tokens)
+                    self._release_buffer_write_source_if_staged(entry)
+
+                    host_indices = entry.host_indices
+                    if completed > 0:
+                        cc.mem_pool_host.free(host_indices[:completed])
+                    entry.inflight_offset += completed
+                    entry.inflight_tokens -= completed
+                    if entry.inflight_tokens == 0:
                         entry.host_indices = None
-                    self.ongoing_write_through.pop(entry.write_id, None)
+                        entry.host_data_ready = False
+                    else:
+                        # Keep the failed suffix in L2 and retry L3 directly;
+                        # re-reading the same KV from GPU wastes bandwidth and
+                        # would require the source to remain pinned.
+                        entry.host_indices = host_indices[completed:]
+                        entry.host_data_ready = True
+                    entry.storage_operation_id = None
+                    if entry.durable_tokens >= entry.backup_len:
+                        self._drop_pending_buffer_write(entry)
+                    else:
+                        self._schedule_buffer_write_retry(
+                            entry, made_progress=completed > 0
+                        )
                 elif entry is not None:
                     entry.release_host()
                 if log_metrics and self.enable_storage_metrics:
@@ -843,9 +881,11 @@ class HiRadixCache(RadixCache):
         self.token_to_kv_pool_host.clear()
         self.ongoing_write_through.clear()
         self.ongoing_load_back.clear()
+        self.loading_node_to_ack.clear()
         self.ongoing_prefetch.clear()
         self.ongoing_backup.clear()
         self.pending_write_through.clear()
+        self.pending_prefetch_query.clear()
         self.pending_prefetch_alloc.clear()
         self.buffer_query_tokens_occupied = 0
         self.transient_host_nodes_by_reqid.clear()
@@ -922,7 +962,11 @@ class HiRadixCache(RadixCache):
                 lock_node=node,
                 backup_len=len(node.key),
                 publish_nodes=[node],
+                source_locked=True,
             )
+            # The source must remain available until L3 acknowledges every
+            # chunk. Otherwise L1 eviction can make a queued write impossible.
+            self.inc_lock_ref(node)
             node.write_through_pending_id = context.write_id
             self.ongoing_write_through[context.write_id] = context
             self.pending_write_through.append(context.write_id)
@@ -998,32 +1042,52 @@ class HiRadixCache(RadixCache):
     def _replace_pending_load_back_node(
         self, old_node: TreeNode, new_nodes: List[TreeNode]
     ) -> None:
-        for entry in self.ongoing_load_back.values():
-            if not isinstance(entry, LoadBackContext):
-                continue
-            for index, node in enumerate(entry.host_nodes):
-                if node is not old_node:
-                    continue
-                # load_back() owns one host reference per source node. The
-                # split prefix needs its own matching reference so completion
-                # can release both slices exactly once.
-                new_nodes[0].protect_host()
-                entry.host_nodes[index : index + 1] = new_nodes
-                return
+        ack_id = self.loading_node_to_ack.get(old_node)
+        if ack_id is None:
+            return
+        entry = self.ongoing_load_back.get(ack_id)
+        if not isinstance(entry, LoadBackContext):
+            return
+        try:
+            index = entry.host_nodes.index(old_node)
+        except ValueError:
+            return
 
-    def _snapshot_write_context(
-        self, context: WriteThroughContext
-    ) -> tuple[torch.Tensor, RadixKey, Optional[List[str]], Optional[List[str]]]:
+        # load_back() owns one host reference per source node. The split prefix
+        # needs its own reference so completion releases both slices once.
+        new_nodes[0].protect_host()
+        entry.host_nodes[index : index + 1] = new_nodes
+        self.loading_node_to_ack.pop(old_node, None)
+        for node in new_nodes:
+            self.loading_node_to_ack[node] = ack_id
+
+    def _write_context_is_attached(self, context: WriteThroughContext) -> bool:
         nodes = context.publish_nodes
-        if not nodes or any(
+        return bool(nodes) and not any(
             node.value is None
             or node.parent is None
             or node.parent.children.get(node.key.child_key(self.page_size)) is not node
             for node in nodes
-        ):
+        )
+
+    def _snapshot_write_metadata(self, context: WriteThroughContext) -> None:
+        if not self._write_context_is_attached(context):
             raise RuntimeError("write-through source was evicted before dispatch")
-        if sum(len(node.key) for node in nodes) != context.backup_len:
+        nodes = context.publish_nodes
+        if (
+            sum(len(node.key) for node in nodes) != context.backup_len
+            or sum(len(node.value) for node in nodes) != context.backup_len
+        ):
             raise RuntimeError("write-through node chain changed unexpectedly")
+
+        if context.key is not None:
+            if (
+                len(context.key) != context.backup_len
+                or context.hash_value is None
+                or len(context.hash_value) * self.page_size != context.backup_len
+            ):
+                raise RuntimeError("cached write-through metadata is invalid")
+            return
 
         top = nodes[0]
         if top.key.is_bigram:
@@ -1032,103 +1096,255 @@ class HiRadixCache(RadixCache):
                 token_ids.extend(node.key.token_ids[1:])
         else:
             token_ids = [token for node in nodes for token in node.key.token_ids]
-        key = RadixKey(token_ids, top.key.extra_key, top.key.is_bigram)
-        hash_value = None
-        if all(node.hash_value is not None for node in nodes):
-            hash_value = [value for node in nodes for value in node.hash_value]
-        prefix_keys = (
+        context.key = RadixKey(token_ids, top.key.extra_key, top.key.is_bigram)
+        if len(context.key) != context.backup_len:
+            raise RuntimeError("write-through key length does not match source")
+        if any(node.hash_value is None for node in nodes):
+            raise RuntimeError("write-through source is missing L3 hashes")
+        context.hash_value = [value for node in nodes for value in node.hash_value]
+        if len(context.hash_value) * self.page_size != context.backup_len:
+            raise RuntimeError("write-through hash length does not match source")
+        context.prefix_keys = (
             list(top.get_prefix_hash_values(top.parent))
             if self.hicache_storage_pass_prefix_keys
             else None
         )
-        return torch.cat([node.value for node in nodes]), key, hash_value, prefix_keys
+
+    def _slice_write_device_indices(
+        self, context: WriteThroughContext, offset: int, length: int
+    ) -> torch.Tensor:
+        pieces = []
+        remaining_offset = offset
+        remaining_length = length
+        for node in context.publish_nodes:
+            node_length = len(node.value)
+            if remaining_offset >= node_length:
+                remaining_offset -= node_length
+                continue
+            take = min(node_length - remaining_offset, remaining_length)
+            pieces.append(node.value[remaining_offset : remaining_offset + take])
+            remaining_length -= take
+            remaining_offset = 0
+            if remaining_length == 0:
+                break
+        if remaining_length != 0 or not pieces:
+            raise RuntimeError("write-through chunk exceeds source node chain")
+        return pieces[0] if len(pieces) == 1 else torch.cat(pieces)
 
     def _drop_pending_buffer_write(self, context: WriteThroughContext) -> None:
         self.ongoing_write_through.pop(context.write_id, None)
         for node in context.publish_nodes:
             if node.write_through_pending_id == context.write_id:
                 node.write_through_pending_id = None
+        if context.source_locked:
+            self.dec_lock_ref(context.lock_node)
+            context.source_locked = False
+        context.inflight_tokens = 0
+        context.host_data_ready = False
+        context.storage_operation_id = None
+
+    def _release_buffer_write_source_if_staged(
+        self, context: WriteThroughContext
+    ) -> None:
+        if (
+            context.source_locked
+            and context.host_data_ready
+            and context.inflight_offset + context.inflight_tokens >= context.backup_len
+        ):
+            # The final suffix is now protected by L2. L3 retries can use the
+            # same host pages, so the GPU source no longer needs to stay pinned.
+            self.dec_lock_ref(context.lock_node)
+            context.source_locked = False
+
+    def _mark_buffer_write_durable(
+        self, context: WriteThroughContext, durable_tokens: int
+    ) -> None:
+        remaining = durable_tokens
+        for node in context.publish_nodes:
+            completed = min(len(node.key), remaining)
+            node.storage_backed_tokens = max(node.storage_backed_tokens, completed)
+            remaining -= completed
+            if remaining <= 0:
+                break
+
+    def _schedule_buffer_write_retry(
+        self, context: WriteThroughContext, *, made_progress: bool
+    ) -> None:
+        if made_progress:
+            context.retry_count = 0
+            context.retry_at = 0.0
+        else:
+            context.retry_count += 1
+            delay = min(5.0, 0.1 * (2 ** min(context.retry_count - 1, 6)))
+            context.retry_at = time.monotonic() + delay
+        self.pending_write_through.append(context.write_id)
 
     def _dispatch_pending_buffer_writes(self, pending_count: int) -> None:
         if not self.buffer_only:
             return
 
-        for _ in range(min(pending_count, len(self.pending_write_through))):
-            write_id = self.pending_write_through.popleft()
+        dispatch_count = min(
+            pending_count,
+            len(self.pending_write_through),
+            self.buffer_write_dispatch_limit,
+        )
+        if dispatch_count == 0:
+            return
+
+        write_ids = [
+            self.pending_write_through.popleft() for _ in range(dispatch_count)
+        ]
+        records = []
+        now = time.monotonic()
+        requested_tokens = 0
+        for write_id in write_ids:
             context = self.ongoing_write_through.get(write_id)
-            local_action = 0
-            if context is not None and context.host_indices is None:
-                attached = all(
-                    node.value is not None
-                    and node.parent is not None
-                    and node.parent.children.get(
-                        node.key.child_key(self.page_size)
+            local_action = _BUFFER_WRITE_STALE
+            valid = 0
+            remaining = 0
+            if context is not None:
+                if context.storage_operation_id is not None:
+                    # A duplicate queue entry must not cancel an in-flight write.
+                    local_action = _BUFFER_WRITE_IN_FLIGHT
+                elif context.host_indices is not None:
+                    if not context.host_data_ready:
+                        # D2H is still in flight; this is a duplicate entry.
+                        local_action = _BUFFER_WRITE_IN_FLIGHT
+                    elif context.retry_at > now:
+                        local_action = _BUFFER_WRITE_DEFER
+                    else:
+                        local_action = _BUFFER_WRITE_L3_RETRY
+                        remaining = context.inflight_tokens
+                        valid = int(
+                            remaining > 0
+                            and remaining % self.page_size == 0
+                            and len(context.host_indices) == remaining
+                            and context.inflight_offset == context.durable_tokens
+                            and context.key is not None
+                            and context.hash_value is not None
+                        )
+                else:
+                    attached = self._write_context_is_attached(context)
+                    top = context.publish_nodes[0] if attached else None
+                    if not attached:
+                        local_action = _BUFFER_WRITE_INVALID
+                    elif context.retry_at > now:
+                        local_action = _BUFFER_WRITE_DEFER
+                    elif top.parent is self.root_node or top.parent.storage_backed:
+                        local_action = _BUFFER_WRITE_D2H
+                    elif (
+                        top.parent is not None
+                        and top.parent.write_through_pending_id is not None
+                    ):
+                        local_action = _BUFFER_WRITE_DEFER
+                    else:
+                        local_action = _BUFFER_WRITE_INVALID
+                    if local_action == _BUFFER_WRITE_D2H:
+                        try:
+                            self._snapshot_write_metadata(context)
+                        except RuntimeError:
+                            local_action = _BUFFER_WRITE_INVALID
+                        else:
+                            remaining = context.backup_len - context.durable_tokens
+                            valid = int(
+                                remaining > 0 and remaining % self.page_size == 0
+                            )
+                            requested_tokens += max(0, remaining)
+            records.append((write_id, context, local_action, valid, remaining))
+
+        local_available = self.cache_controller.mem_pool_host.available_size()
+        reclaim = min(requested_tokens, self.cache_controller.mem_pool_host.size)
+        reclaim_needed = max(0, reclaim - local_available)
+        if reclaim_needed > 0:
+            self.evict_host(reclaim_needed)
+        sync_values = [self.cache_controller.mem_pool_host.available_size()]
+        for write_id, _context, action, valid, remaining in records:
+            sync_values.extend(
+                (
+                    write_id,
+                    -write_id,
+                    action,
+                    -action,
+                    valid,
+                    -valid,
+                    remaining,
+                    -remaining,
+                )
+            )
+        status = torch.tensor(sync_values, dtype=torch.int)
+        self._all_reduce_attn_groups(status, torch.distributed.ReduceOp.MIN)
+
+        available = int(status[0].item())
+        for index, (
+            write_id,
+            context,
+            _local_action,
+            _local_valid,
+            _local_remaining,
+        ) in enumerate(records):
+            base = 1 + index * 8
+            (
+                min_write_id,
+                neg_max_write_id,
+                action,
+                neg_max_action,
+                valid,
+                neg_max_valid,
+                min_remaining,
+                neg_max_remaining,
+            ) = map(int, status[base : base + 8].tolist())
+            if min_write_id != -neg_max_write_id or min_write_id != write_id:
+                raise RuntimeError("Buffer-only write queue diverged across TP ranks")
+            max_action = -neg_max_action
+            if action != max_action:
+                # Retry deadlines are based on each rank's monotonic clock. If
+                # some ranks just crossed the deadline, defer on every rank.
+                if action == _BUFFER_WRITE_DEFER and max_action in (
+                    _BUFFER_WRITE_D2H,
+                    _BUFFER_WRITE_L3_RETRY,
+                ):
+                    action = _BUFFER_WRITE_DEFER
+                else:
+                    raise RuntimeError(
+                        "Buffer-only write state diverged across TP ranks"
                     )
-                    is node
-                    for node in context.publish_nodes
+            elif action in (_BUFFER_WRITE_D2H, _BUFFER_WRITE_L3_RETRY) and (
+                valid != -neg_max_valid or min_remaining != -neg_max_remaining
+            ):
+                raise RuntimeError(
+                    "Buffer-only write progress diverged across TP ranks"
                 )
-                top = context.publish_nodes[0]
-                if attached and (
-                    top.parent is self.root_node or top.parent.storage_backed
-                ):
-                    local_action = 2
-                elif (
-                    attached
-                    and top.parent is not None
-                    and top.parent.write_through_pending_id is not None
-                ):
-                    local_action = 1
-            action = torch.tensor(local_action, dtype=torch.int)
-            self._all_reduce_attn_groups(action, torch.distributed.ReduceOp.MIN)
-            if action.item() == 0:
-                if context is not None:
-                    self._drop_pending_buffer_write(context)
+            if action == _BUFFER_WRITE_STALE:
                 continue
-            if action.item() == 1:
-                if context is not None:
-                    self.pending_write_through.append(write_id)
-                continue
-
-            snapshot = None
-            try:
-                snapshot = self._snapshot_write_context(context)
-            except RuntimeError:
-                pass
-            valid = torch.tensor(int(snapshot is not None), dtype=torch.int)
-            self._all_reduce_attn_groups(valid, torch.distributed.ReduceOp.MIN)
-            if valid.item() == 0:
-                if context is not None:
-                    self._drop_pending_buffer_write(context)
-                continue
-            device_indices, key, hash_value, prefix_keys = snapshot
-
-            lengths = torch.tensor(
-                [len(device_indices), -len(device_indices)], dtype=torch.int
-            )
-            self._all_reduce_attn_groups(lengths, torch.distributed.ReduceOp.MIN)
-            if lengths[0].item() != -lengths[1].item():
-                self._drop_pending_buffer_write(context)
-                logger.error("Buffer-only write length diverged across TP ranks")
-                continue
-
-            if len(device_indices) > self.cache_controller.mem_pool_host.size:
-                self._drop_pending_buffer_write(context)
-                logger.warning(
-                    "Dropping buffer-only write of %d tokens because the host "
-                    "pool holds only %d tokens",
-                    len(device_indices),
-                    self.cache_controller.mem_pool_host.size,
-                )
-                continue
-            local_available = self.cache_controller.mem_pool_host.available_size()
-            self.evict_host(max(0, len(device_indices) - local_available))
-            available = torch.tensor(
-                self.cache_controller.mem_pool_host.available_size(), dtype=torch.int
-            )
-            self._all_reduce_attn_groups(available, torch.distributed.ReduceOp.MIN)
-            if available.item() < len(device_indices):
+            if action == _BUFFER_WRITE_DEFER:
                 self.pending_write_through.append(write_id)
                 continue
+            if action == _BUFFER_WRITE_INVALID:
+                raise RuntimeError(
+                    f"Buffer-only write {write_id} lost its source or metadata"
+                )
+            if action == _BUFFER_WRITE_IN_FLIGHT:
+                continue
+            if valid == 0:
+                raise RuntimeError(
+                    f"Buffer-only write {write_id} has invalid progress metadata"
+                )
+            if action == _BUFFER_WRITE_L3_RETRY:
+                self._submit_buffer_write_chunk_to_storage(context)
+                continue
+
+            chunk_tokens = min(min_remaining, available)
+            chunk_tokens -= chunk_tokens % self.page_size
+            if chunk_tokens == 0:
+                self.pending_write_through.append(write_id)
+                continue
+
+            if not context.source_locked:
+                self.inc_lock_ref(context.lock_node)
+                context.source_locked = True
+            device_indices = self._slice_write_device_indices(
+                context, context.durable_tokens, chunk_tokens
+            )
 
             host_indices = self.cache_controller.write(
                 device_indices=device_indices,
@@ -1136,38 +1352,95 @@ class HiRadixCache(RadixCache):
                 **self._get_extra_pools(),
             )
             if host_indices is None:
-                raise RuntimeError(
-                    "Host allocation failed despite synchronized available capacity"
-                )
+                self._schedule_buffer_write_retry(context, made_progress=False)
+                continue
 
             context.host_indices = host_indices
-            context.key = key
-            context.hash_value = hash_value
-            context.prefix_keys = prefix_keys
-            self.inc_lock_ref(context.lock_node)
+            context.inflight_offset = context.durable_tokens
+            context.inflight_tokens = chunk_tokens
+            context.host_data_ready = False
+            available -= chunk_tokens
+
+    def _submit_buffer_write_chunk_to_storage(
+        self, context: WriteThroughContext
+    ) -> bool:
+        if (
+            context.host_indices is None
+            or not context.host_data_ready
+            or context.inflight_tokens <= 0
+            or len(context.host_indices) != context.inflight_tokens
+            or context.inflight_offset != context.durable_tokens
+            or context.key is None
+            or context.hash_value is None
+        ):
+            raise RuntimeError(
+                f"Buffer-only write {context.write_id} has no retryable L2 chunk"
+            )
+
+        chunk_start = context.inflight_offset
+        chunk_end = chunk_start + context.inflight_tokens
+        chunk_key = context.key[chunk_start:chunk_end]
+        chunk_hash_value = context.hash_value[
+            chunk_start // self.page_size : chunk_end // self.page_size
+        ]
+        chunk_prefix_keys = None
+        if context.prefix_keys is not None:
+            chunk_prefix_keys = list(context.prefix_keys)
+            if chunk_start > 0:
+                chunk_prefix_keys.extend(
+                    context.hash_value[: chunk_start // self.page_size]
+                )
+        try:
+            operation_id = self.cache_controller.write_storage(
+                context.host_indices,
+                chunk_key,
+                chunk_hash_value,
+                chunk_prefix_keys,
+                **self._get_extra_pools(),
+            )
+        except Exception:
+            self._schedule_buffer_write_retry(context, made_progress=False)
+            logger.exception(
+                "Failed to submit buffer-only L3 write %s", context.write_id
+            )
+            return False
+        if operation_id is None:
+            self._schedule_buffer_write_retry(context, made_progress=False)
+            logger.error(
+                "Buffer-only L3 write %s returned no operation id",
+                context.write_id,
+            )
+            return False
+        context.storage_operation_id = operation_id
+        self.ongoing_backup[operation_id] = context
+        return True
 
     def _finish_write_through_ack(self, ack_id: int, *, release_lock: bool) -> None:
-        context = self.ongoing_write_through[ack_id]
+        context = self.ongoing_write_through.get(ack_id)
+        if context is None:
+            logger.warning("Ignoring stale write-through ACK %s", ack_id)
+            return
         if self.buffer_only:
-            try:
-                operation_id = self.cache_controller.write_storage(
-                    context.host_indices,
-                    context.key,
-                    context.hash_value,
-                    context.prefix_keys,
-                    **self._get_extra_pools(),
-                )
-            except Exception:
-                self.cache_controller.mem_pool_host.free(context.host_indices)
-                self._drop_pending_buffer_write(context)
-                if release_lock:
-                    self.dec_lock_ref(context.lock_node)
-                logger.exception("Failed to submit buffer-only L3 write %s", ack_id)
+            if context.storage_operation_id is not None:
+                logger.warning("Ignoring duplicate buffer-only write ACK %s", ack_id)
                 return
-            context.storage_operation_id = operation_id
-            self.ongoing_backup[operation_id] = context
-            if release_lock:
-                self.dec_lock_ref(context.lock_node)
+            if context.host_data_ready:
+                logger.warning("Ignoring stale buffer-only D2H ACK %s", ack_id)
+                return
+            if (
+                context.host_indices is None
+                or context.inflight_tokens <= 0
+                or len(context.host_indices) != context.inflight_tokens
+                or context.inflight_offset != context.durable_tokens
+                or context.key is None
+                or context.hash_value is None
+            ):
+                raise RuntimeError(
+                    f"Buffer-only write {ack_id} has an invalid in-flight chunk"
+                )
+            context.host_data_ready = True
+            self._release_buffer_write_source_if_staged(context)
+            self._submit_buffer_write_chunk_to_storage(context)
             return
 
         self.ongoing_write_through.pop(ack_id)
@@ -1249,9 +1522,7 @@ class HiRadixCache(RadixCache):
         node.hit_count += 1
 
         needs_backup = (
-            not node.storage_backed
-            if self.buffer_only
-            else not node.backuped
+            not node.storage_backed if self.buffer_only else not node.backuped
         )
         if needs_backup and node.write_through_pending_id is None:
             if node.hit_count >= self.write_through_threshold:
@@ -1319,6 +1590,7 @@ class HiRadixCache(RadixCache):
             return
         if isinstance(entry, LoadBackContext):
             for node in entry.host_nodes:
+                self.loading_node_to_ack.pop(node, None)
                 node.device_loading = False
                 self._record_store_event(node, medium=StorageMedium.GPU)
                 node.release_host()
@@ -1333,14 +1605,7 @@ class HiRadixCache(RadixCache):
             self.dec_lock_ref(entry)
 
     def _synchronize_loading_prefix(self, key: RadixKey) -> None:
-        if not self.ongoing_load_back:
-            return
-        loading_node_to_ack = {}
-        for ack_id, entry in self.ongoing_load_back.items():
-            if isinstance(entry, LoadBackContext):
-                for node in entry.host_nodes:
-                    loading_node_to_ack[node] = ack_id
-        if not loading_node_to_ack:
+        if not self.loading_node_to_ack:
             return
 
         needed_ack_ids = set()
@@ -1352,7 +1617,7 @@ class HiRadixCache(RadixCache):
             if child is None:
                 break
             if child.device_loading:
-                ack_id = loading_node_to_ack.get(child)
+                ack_id = self.loading_node_to_ack.get(child)
                 if ack_id is not None:
                     needed_ack_ids.add(ack_id)
             prefix_len = child.key.match(remaining_key, page_size=self.page_size)
@@ -1365,9 +1630,7 @@ class HiRadixCache(RadixCache):
             return
 
         finish_through = -1
-        for index, (_, _, ack_list) in enumerate(
-            self.cache_controller.ack_load_queue
-        ):
+        for index, (_, _, ack_list) in enumerate(self.cache_controller.ack_load_queue):
             if needed_ack_ids.intersection(ack_list):
                 finish_through = index
         if finish_through < 0:
@@ -1747,10 +2010,13 @@ class HiRadixCache(RadixCache):
                 n.release_host()
             self.ongoing_load_back[last_hit_node.id] = last_hit_node
         else:
-            self.ongoing_load_back[last_hit_node.id] = LoadBackContext(
+            context = LoadBackContext(
                 end_node=last_hit_node,
                 host_nodes=nodes_to_load,
             )
+            self.ongoing_load_back[last_hit_node.id] = context
+            for host_node in nodes_to_load:
+                self.loading_node_to_ack[host_node] = last_hit_node.id
         offset = 0
         for node in nodes_to_load:
             node.value = device_indices[offset : offset + len(node.host_value)].clone()
@@ -1876,7 +2142,12 @@ class HiRadixCache(RadixCache):
                 cc.ack_backup_queue.qsize(),
                 cc.host_mem_release_queue.qsize(),
                 len(self.pending_write_through),
+                len(self.pending_prefetch_query),
                 len(self.pending_prefetch_alloc),
+                max(
+                    0,
+                    cc.mem_pool_host.size - self.buffer_query_tokens_occupied,
+                ),
             ],
             dtype=torch.int,
         )
@@ -1888,7 +2159,9 @@ class HiRadixCache(RadixCache):
             n_backup,
             n_release,
             n_pending_write,
+            n_pending_query,
             n_pending_prefetch,
+            query_budget,
         ) = map(int, qsizes.tolist())
         self._drain_storage_control_queues_impl(
             n_revoke=n_revoke,
@@ -1900,8 +2173,9 @@ class HiRadixCache(RadixCache):
         if self.buffer_only:
             # Writes get first use of pages released by the queues above. Reads
             # then consume the remainder subject to the soft write reserve.
-            self._dispatch_pending_buffer_writes(n_pending_write)
+            self._dispatch_pending_buffer_writes(n_pending_write + n_backup)
             self._dispatch_pending_prefetch_alloc(n_pending_prefetch + n_hit)
+            self._dispatch_pending_prefetch_queries(n_pending_query, query_budget)
 
     def _release_prefetch_context(
         self,
@@ -1915,7 +2189,10 @@ class HiRadixCache(RadixCache):
             if free_all_host:
                 self.cache_controller.mem_pool_host.free(context.host_indices)
             elif free_completed:
-                completed = min(operation.completed_tokens, context.allocated_tokens)
+                completed = min(
+                    operation.completed_tokens if operation is not None else 0,
+                    context.allocated_tokens,
+                )
                 if completed > 0:
                     self.cache_controller.mem_pool_host.free(
                         context.host_indices[:completed]
@@ -1927,12 +2204,12 @@ class HiRadixCache(RadixCache):
             context.anchor.release_host()
         self.cache_controller.prefetch_tokens_occupied = max(
             0,
-            self.cache_controller.prefetch_tokens_occupied
-            - context.allocated_tokens,
+            self.cache_controller.prefetch_tokens_occupied - context.allocated_tokens,
         )
         context.host_indices = None
         context.allocated_tokens = 0
-        operation.host_indices = None
+        if operation is not None:
+            operation.host_indices = None
         self._release_query_reservation(context)
 
     def _release_query_reservation(self, context: PrefetchContext) -> None:
@@ -2000,6 +2277,8 @@ class HiRadixCache(RadixCache):
 
     def _allocate_buffer_prefetch(self, context: PrefetchContext) -> bool:
         operation = context.operation
+        if operation is None:
+            return False
         if operation.host_indices is not None:
             return True
 
@@ -2033,9 +2312,45 @@ class HiRadixCache(RadixCache):
         self._release_query_reservation(context)
         operation.host_indices = host_indices
         operation.hash_value = operation.hash_value[: target // self.page_size]
+        operation.mark_io_started()
         self.cache_controller.prefetch_tokens_occupied += target
         self.cache_controller.prefetch_buffer.put(operation)
         return True
+
+    def _dispatch_pending_prefetch_queries(
+        self, pending_count: int, query_budget: int
+    ) -> None:
+        if not self.buffer_only or query_budget < self.prefetch_threshold:
+            return
+
+        pool_capacity = self.cache_controller.mem_pool_host.size
+        for _ in range(min(pending_count, len(self.pending_prefetch_query))):
+            req_id = self.pending_prefetch_query.popleft()
+            context = self.ongoing_prefetch.get(req_id)
+            if context is None or context.aborted or context.operation is not None:
+                continue
+
+            target = min(len(context.key), pool_capacity, query_budget)
+            target -= target % self.page_size
+            if target < self.prefetch_threshold:
+                self.pending_prefetch_query.appendleft(req_id)
+                break
+
+            context.key = context.key[:target]
+            operation = self.cache_controller.prefetch(
+                req_id,
+                None,
+                context.key,
+                context.last_hash,
+                context.prefix_keys,
+                **self._get_extra_pools(),
+            )
+            context.operation = operation
+            context.query_tokens_reserved = target
+            self.buffer_query_tokens_occupied += target
+            query_budget -= target
+            if query_budget < self.prefetch_threshold:
+                break
 
     def _dispatch_pending_prefetch_alloc(self, pending_count: int) -> None:
         if not self.buffer_only:
@@ -2049,12 +2364,10 @@ class HiRadixCache(RadixCache):
             if not self._allocate_buffer_prefetch(context):
                 cancel_local = self.prefetch_stop_policy == "best_effort" or (
                     self.prefetch_stop_policy == "timeout"
-                    and self.is_prefetch_timeout(context.operation)
+                    and self._is_prefetch_allocation_timeout(context.operation)
                 )
                 cancel = torch.tensor(int(cancel_local), dtype=torch.int)
-                self._all_reduce_attn_groups(
-                    cancel, torch.distributed.ReduceOp.MAX
-                )
+                self._all_reduce_attn_groups(cancel, torch.distributed.ReduceOp.MAX)
                 if cancel.item() == 1:
                     context.operation.mark_terminate()
                     self.ongoing_prefetch.pop(req_id, None)
@@ -2068,6 +2381,10 @@ class HiRadixCache(RadixCache):
             if not context.aborted:
                 continue
             operation = context.operation
+            if operation is None:
+                self.ongoing_prefetch.pop(req_id, None)
+                self._release_prefetch_context(context, free_completed=True)
+                continue
             if operation.host_indices is None:
                 if not operation.query_done:
                     continue
@@ -2076,12 +2393,24 @@ class HiRadixCache(RadixCache):
             self.ongoing_prefetch.pop(req_id, None)
             self._release_prefetch_context(context, free_completed=True)
 
-    # Timeout is linearly increasing with the number of pages
-    def _prefetch_timeout_check_linear_func(self, operation: PrefetchOperation):
+    def _prefetch_timeout_seconds(self, operation: PrefetchOperation) -> float:
         cfg = self.prefetch_timeout_config
         num_tokens = len(operation.hash_value) * self.page_size
-        timeout = min(cfg.max, cfg.base + cfg.per_ki_token * num_tokens / 1024)
-        return time.monotonic() - operation.start_time > timeout
+        return min(cfg.max, cfg.base + cfg.per_ki_token * num_tokens / 1024)
+
+    def _is_prefetch_allocation_timeout(self, operation: PrefetchOperation) -> bool:
+        start_time = operation.query_done_time or operation.start_time
+        return time.monotonic() - start_time > self._prefetch_timeout_seconds(operation)
+
+    # Timeout is linearly increasing with the number of pages.
+    def _prefetch_timeout_check_linear_func(self, operation: PrefetchOperation):
+        start_time = (
+            operation.io_start_time
+            if getattr(operation, "query_first", False)
+            and getattr(operation, "io_start_time", None) is not None
+            else operation.start_time
+        )
+        return time.monotonic() - start_time > self._prefetch_timeout_seconds(operation)
 
     def can_terminate_prefetch(self, operation: PrefetchOperation):
         if getattr(operation, "query_first", False):
@@ -2144,11 +2473,17 @@ class HiRadixCache(RadixCache):
         context = self.ongoing_prefetch[req_id]
         operation = context.operation
 
+        if operation is None:
+            return False
+
         if operation.host_indices is None:
             return False if self.buffer_only else True
 
         if getattr(operation, "query_first", False):
-            terminate_local = self.prefetch_stop_policy == "best_effort" or (
+            terminate_local = (
+                self.prefetch_stop_policy == "best_effort"
+                and (operation.completed_tokens > 0 or operation.io_done)
+            ) or (
                 self.prefetch_stop_policy == "timeout"
                 and self.is_prefetch_timeout(operation)
             )
@@ -2209,7 +2544,7 @@ class HiRadixCache(RadixCache):
             return
 
         operation = self.ongoing_prefetch[req_id].operation
-        if operation.host_indices is None:
+        if operation is None or operation.host_indices is None:
             return
         operation.mark_terminate()
 
@@ -2281,20 +2616,10 @@ class HiRadixCache(RadixCache):
         # align the number of fetching tokens to the page size
         prefetch_key = prefetch_key.page_aligned(self.page_size)
         prefetch_length = len(prefetch_key)
-        if self.buffer_only:
-            query_budget = max(
-                0,
-                self.cache_controller.mem_pool_host.size
-                - self.buffer_query_tokens_occupied,
-            )
-            query_budget -= query_budget % self.page_size
-            if prefetch_length > query_budget:
-                prefetch_length = query_budget
-                prefetch_key = prefetch_key[:prefetch_length]
         if (
             not self.enable_storage
             or prefetch_length < self.prefetch_threshold
-            or self.cache_controller.prefetch_rate_limited()
+            or (not self.buffer_only and self.cache_controller.prefetch_rate_limited())
         ):
             return
 
@@ -2304,22 +2629,14 @@ class HiRadixCache(RadixCache):
                 self.inc_lock_ref(last_host_node)
             else:
                 last_host_node.protect_host()
-            operation = self.cache_controller.prefetch(
-                req_id,
-                None,
-                prefetch_key,
-                last_hash,
-                prefix_keys,
-                **self._get_extra_pools(),
-            )
             self.ongoing_prefetch[req_id] = PrefetchContext(
                 anchor=last_host_node,
                 key=prefetch_key,
-                operation=operation,
                 anchor_device_locked=anchor_device_locked,
-                query_tokens_reserved=prefetch_length,
+                last_hash=last_hash,
+                prefix_keys=prefix_keys,
             )
-            self.buffer_query_tokens_occupied += prefetch_length
+            self.pending_prefetch_query.append(req_id)
             return
 
         last_host_node.protect_host()
@@ -2592,7 +2909,8 @@ class HiRadixCache(RadixCache):
         operation = context.operation
         if self.buffer_only:
             context.aborted = True
-            operation.mark_terminate()
+            if operation is not None:
+                operation.mark_terminate()
             self._reap_aborted_prefetches()
             return
 

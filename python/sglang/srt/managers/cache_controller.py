@@ -185,6 +185,8 @@ class PrefetchOperation(StorageOperation):
         self.io_done = False
         self.storage_hit_count = 0
         self.start_time = time.monotonic()
+        self.query_done_time: Optional[float] = None
+        self.io_start_time: Optional[float] = None
 
         super().__init__(host_indices, token_ids, last_hash, prefix_keys=prefix_keys)
 
@@ -213,6 +215,12 @@ class PrefetchOperation(StorageOperation):
             self.hash_value = hash_value
             self.storage_hit_count = hit_count
             self.query_done = True
+            self.query_done_time = time.monotonic()
+
+    def mark_io_started(self) -> None:
+        with self._lock:
+            if self.io_start_time is None:
+                self.io_start_time = time.monotonic()
 
     def mark_io_done(self) -> None:
         with self._lock:
