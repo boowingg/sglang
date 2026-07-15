@@ -1,8 +1,9 @@
 import unittest
 from array import array
+from collections import deque
 from queue import Queue
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import torch
 
@@ -24,9 +25,7 @@ def _node(tokens, *, parent=None, values=None):
     node = TreeNode()
     node.parent = parent
     node.key = RadixKey(array("q", tokens))
-    node.value = (
-        torch.tensor(values, dtype=torch.int64) if values is not None else None
-    )
+    node.value = torch.tensor(values, dtype=torch.int64) if values is not None else None
     return node
 
 
@@ -37,6 +36,23 @@ class TestHiCacheBufferOnly(unittest.TestCase):
 
         self.assertFalse(operation.increment(4))
         self.assertEqual(operation.completed_tokens, 4)
+
+    def test_buffer_write_locks_source_when_it_is_enqueued(self):
+        cache = HiRadixCache.__new__(HiRadixCache)
+        cache.buffer_only = True
+        cache.ongoing_write_through = {}
+        cache.pending_write_through = deque()
+        cache.inc_lock_ref = MagicMock()
+
+        root = _node([], values=[])
+        child = _node([1, 2], parent=root, values=[10, 11])
+
+        self.assertEqual(cache.write_backup(child), 2)
+
+        context = cache.ongoing_write_through[child.id]
+        self.assertTrue(context.source_locked)
+        cache.inc_lock_ref.assert_called_once_with(child)
+        self.assertEqual(list(cache.pending_write_through), [child.id])
 
     def test_loading_node_is_hidden_from_regular_prefix_match(self):
         cache = HiRadixCache.__new__(HiRadixCache)
@@ -93,9 +109,8 @@ class TestHiCacheBufferOnly(unittest.TestCase):
         cache.ongoing_load_back = {
             child.id: LoadBackContext(end_node=child, host_nodes=[child])
         }
-        cache.cache_controller.ack_load_queue.append(
-            (0, finish_event, [child.id])
-        )
+        cache.loading_node_to_ack = {child: child.id}
+        cache.cache_controller.ack_load_queue.append((0, finish_event, [child.id]))
 
         req = SimpleNamespace(
             req_pool_idx=0,
@@ -104,7 +119,7 @@ class TestHiCacheBufferOnly(unittest.TestCase):
             last_node=child,
             prefix_indices=torch.arange(4),
             priority=0,
-            get_fill_ids=lambda: [1, 2, 3, 4],
+            get_fill_ids=lambda: array("q", [1, 2, 3, 4]),
         )
 
         cache.cache_unfinished_req(req, chunked=True)
@@ -137,9 +152,11 @@ class TestHiCacheBufferOnly(unittest.TestCase):
         unrelated_event = MagicMock()
         cache.ongoing_load_back = {
             target.id: LoadBackContext(end_node=target, host_nodes=[target]),
-            unrelated.id: LoadBackContext(
-                end_node=unrelated, host_nodes=[unrelated]
-            ),
+            unrelated.id: LoadBackContext(end_node=unrelated, host_nodes=[unrelated]),
+        }
+        cache.loading_node_to_ack = {
+            target: target.id,
+            unrelated: unrelated.id,
         }
         cache.cache_controller = SimpleNamespace(
             ack_load_queue=[
@@ -201,9 +218,7 @@ class TestHiCacheBufferOnly(unittest.TestCase):
         cache.evictable_leaves = set()
         cache.evictable_host_leaves = set()
         cache.transient_host_nodes_by_reqid = {}
-        cache.eviction_strategy = SimpleNamespace(
-            get_priority=lambda node: node.id
-        )
+        cache.eviction_strategy = SimpleNamespace(get_priority=lambda node: node.id)
         cache._record_remove_event = MagicMock()
         cache._discard_session_leaf = MagicMock()
         mem_pool_host = MagicMock()
@@ -243,9 +258,7 @@ class TestHiCacheBufferOnly(unittest.TestCase):
         cache.evictable_leaves = set()
         cache.evictable_host_leaves = set()
         cache.transient_host_nodes_by_reqid = {}
-        cache.eviction_strategy = SimpleNamespace(
-            get_priority=lambda node: node.id
-        )
+        cache.eviction_strategy = SimpleNamespace(get_priority=lambda node: node.id)
         mem_pool_host = MagicMock()
         mem_pool_device_allocator = MagicMock()
         cache.cache_controller = SimpleNamespace(
@@ -270,12 +283,8 @@ class TestHiCacheBufferOnly(unittest.TestCase):
         self.assertEqual(num_evicted, 0)
         mem_pool_host.free.assert_not_called()
         mem_pool_device_allocator.free.assert_not_called()
-        self.assertIs(
-            root.children[parent.key.child_key(cache.page_size)], parent
-        )
-        self.assertIs(
-            parent.children[child.key.child_key(cache.page_size)], child
-        )
+        self.assertIs(root.children[parent.key.child_key(cache.page_size)], parent)
+        self.assertIs(parent.children[child.key.child_key(cache.page_size)], child)
 
     def test_split_propagates_pending_write_and_storage_state(self):
         cache = HiRadixCache.__new__(HiRadixCache)
@@ -312,7 +321,9 @@ class TestHiCacheBufferOnly(unittest.TestCase):
         cache.ongoing_prefetch = {}
         cache.ongoing_write_through = {}
         cache.ongoing_backup = {}
-        cache._all_reduce_attn_groups = lambda tensor, op: None
+        cache.pending_write_through = deque()
+        cache.dec_lock_ref = MagicMock()
+        cache._all_reduce_attn_groups = MagicMock()
 
         root = _node([], values=[])
         first = _node([1, 2], parent=root, values=[10, 11])
@@ -323,6 +334,9 @@ class TestHiCacheBufferOnly(unittest.TestCase):
             backup_len=4,
             publish_nodes=[first, second],
             host_indices=torch.arange(4),
+            storage_operation_id=123,
+            inflight_tokens=4,
+            host_data_ready=True,
         )
         first.write_through_pending_id = context.write_id
         second.write_through_pending_id = context.write_id
@@ -351,9 +365,15 @@ class TestHiCacheBufferOnly(unittest.TestCase):
 
         self.assertTrue(first.storage_backed)
         self.assertFalse(second.storage_backed)
-        self.assertIsNone(first.write_through_pending_id)
-        self.assertIsNone(second.write_through_pending_id)
-        self.assertNotIn(context.write_id, cache.ongoing_write_through)
+        self.assertEqual(first.write_through_pending_id, context.write_id)
+        self.assertEqual(second.write_through_pending_id, context.write_id)
+        self.assertIn(context.write_id, cache.ongoing_write_through)
+        self.assertEqual(context.durable_tokens, 2)
+        self.assertIsNone(context.storage_operation_id)
+        self.assertTrue(torch.equal(context.host_indices, torch.tensor([2, 3])))
+        self.assertTrue(context.host_data_ready)
+        self.assertEqual(list(cache.pending_write_through), [context.write_id])
+        cache.dec_lock_ref.assert_not_called()
         mem_pool_host.free.assert_called_once()
 
     def test_split_propagates_inflight_load_back_ownership(self):
@@ -371,12 +391,15 @@ class TestHiCacheBufferOnly(unittest.TestCase):
         root.children[child.key.child_key(cache.page_size)] = child
         context = LoadBackContext(end_node=child, host_nodes=[child])
         cache.ongoing_load_back = {child.id: context}
+        cache.loading_node_to_ack = {child: child.id}
 
         prefix = cache._split_node(child.key, child, 2)
 
         self.assertEqual(context.host_nodes, [prefix, child])
         self.assertEqual(prefix.host_ref_counter, 1)
         self.assertEqual(child.host_ref_counter, 1)
+        self.assertEqual(cache.loading_node_to_ack[prefix], child.id)
+        self.assertEqual(cache.loading_node_to_ack[child], child.id)
 
     def test_prefetch_soft_reserve_is_borrowable_without_write_pressure(self):
         cache = HiRadixCache.__new__(HiRadixCache)
@@ -449,7 +472,7 @@ class TestHiCacheBufferOnly(unittest.TestCase):
         self.assertNotIn(child.key.child_key(cache.page_size), root.children)
         self.assertNotIn("req", cache.transient_host_nodes_by_reqid)
 
-    def test_prefetch_query_is_capped_by_shared_buffer_budget(self):
+    def test_prefetch_query_waits_for_shared_buffer_budget(self):
         cache = HiRadixCache.__new__(HiRadixCache)
         cache.page_size = 2
         cache.prefetch_threshold = 4
@@ -458,6 +481,7 @@ class TestHiCacheBufferOnly(unittest.TestCase):
         cache.is_eagle = False
         cache.buffer_query_tokens_occupied = 6
         cache.ongoing_prefetch = {}
+        cache.pending_prefetch_query = deque()
         cache._get_extra_pools = lambda: {}
         cache.inc_lock_ref = MagicMock()
 
@@ -472,9 +496,304 @@ class TestHiCacheBufferOnly(unittest.TestCase):
         anchor = _node([], values=[])
         cache.prefetch_from_storage("req", anchor, list(range(20)))
 
+        controller.prefetch.assert_not_called()
+        self.assertEqual(list(cache.pending_prefetch_query), ["req"])
+        self.assertIsNone(cache.ongoing_prefetch["req"].operation)
+
+        cache._dispatch_pending_prefetch_queries(1, query_budget=4)
+
         controller.prefetch.assert_called_once()
         self.assertEqual(len(controller.prefetch.call_args.args[2]), 4)
         self.assertEqual(cache.buffer_query_tokens_occupied, 10)
+
+    def test_prefetch_query_remains_pending_without_budget(self):
+        cache = HiRadixCache.__new__(HiRadixCache)
+        cache.page_size = 2
+        cache.prefetch_threshold = 4
+        cache.buffer_only = True
+        cache.pending_prefetch_query = deque(["req"])
+        cache.ongoing_prefetch = {
+            "req": PrefetchContext(
+                anchor=_node([], values=[]),
+                key=RadixKey(array("q", range(8))),
+            )
+        }
+        cache._get_extra_pools = lambda: {}
+        controller = MagicMock()
+        controller.mem_pool_host.size = 8
+        cache.cache_controller = controller
+
+        cache._dispatch_pending_prefetch_queries(1, query_budget=2)
+
+        controller.prefetch.assert_not_called()
+        self.assertEqual(list(cache.pending_prefetch_query), ["req"])
+
+    def test_prefetch_io_timeout_starts_when_io_is_admitted(self):
+        cache = HiRadixCache.__new__(HiRadixCache)
+        cache.page_size = 2
+        cache.prefetch_timeout_config = SimpleNamespace(
+            base=10.0, per_ki_token=0.0, max=10.0
+        )
+        operation = PrefetchOperation("req", None, list(range(8)))
+        operation.set_query_result(["h1", "h2", "h3", "h4"], 8)
+        operation.start_time = 0.0
+        operation.io_start_time = 95.0
+
+        with patch(
+            "sglang.srt.mem_cache.hiradix_cache.time.monotonic",
+            return_value=100.0,
+        ):
+            self.assertFalse(cache._prefetch_timeout_check_linear_func(operation))
+
+        operation.io_start_time = 80.0
+        with patch(
+            "sglang.srt.mem_cache.hiradix_cache.time.monotonic",
+            return_value=100.0,
+        ):
+            self.assertTrue(cache._prefetch_timeout_check_linear_func(operation))
+
+    def test_prefetch_timeout_keeps_legacy_operation_compatibility(self):
+        cache = HiRadixCache.__new__(HiRadixCache)
+        cache.page_size = 2
+        cache.prefetch_timeout_config = SimpleNamespace(
+            base=10.0, per_ki_token=0.0, max=10.0
+        )
+        operation = SimpleNamespace(start_time=95.0, hash_value=["h1"])
+
+        with patch(
+            "sglang.srt.mem_cache.hiradix_cache.time.monotonic",
+            return_value=100.0,
+        ):
+            self.assertFalse(cache._prefetch_timeout_check_linear_func(operation))
+
+    def test_oversized_buffer_write_dispatches_one_host_sized_chunk(self):
+        cache = HiRadixCache.__new__(HiRadixCache)
+        cache.page_size = 2
+        cache.buffer_only = True
+        cache.buffer_write_dispatch_limit = 64
+        cache.hicache_storage_pass_prefix_keys = False
+        cache._all_reduce_attn_groups = MagicMock()
+        cache._get_extra_pools = lambda: {}
+        cache.evict_host = MagicMock()
+
+        root = _node([], values=[])
+        child = _node(list(range(8)), parent=root, values=list(range(10, 18)))
+        child.hash_value = ["h1", "h2", "h3", "h4"]
+        root.children[child.key.child_key(cache.page_size)] = child
+        cache.root_node = root
+        context = WriteThroughContext(
+            write_id=child.id,
+            lock_node=child,
+            backup_len=8,
+            publish_nodes=[child],
+            source_locked=True,
+        )
+        child.write_through_pending_id = context.write_id
+        cache.ongoing_write_through = {context.write_id: context}
+        cache.pending_write_through = deque([context.write_id])
+
+        mem_pool_host = MagicMock()
+        mem_pool_host.size = 4
+        mem_pool_host.available_size.return_value = 4
+        controller = SimpleNamespace(
+            mem_pool_host=mem_pool_host,
+            write=MagicMock(return_value=torch.arange(4)),
+        )
+        cache.cache_controller = controller
+
+        cache._dispatch_pending_buffer_writes(1)
+
+        written = controller.write.call_args.kwargs["device_indices"]
+        self.assertTrue(torch.equal(written, child.value[:4]))
+        self.assertEqual(context.inflight_offset, 0)
+        self.assertEqual(context.inflight_tokens, 4)
+        self.assertEqual(context.durable_tokens, 0)
+        self.assertIn(context.write_id, cache.ongoing_write_through)
+        cache._all_reduce_attn_groups.assert_called_once()
+
+    def test_l3_submission_failure_retries_from_retained_host_data(self):
+        cache = HiRadixCache.__new__(HiRadixCache)
+        cache.page_size = 2
+        cache.buffer_only = True
+        cache.pending_write_through = deque()
+        cache.dec_lock_ref = MagicMock()
+        cache._get_extra_pools = lambda: {}
+
+        root = _node([], values=[])
+        child = _node([1, 2], parent=root, values=[10, 11])
+        context = WriteThroughContext(
+            write_id=child.id,
+            lock_node=child,
+            backup_len=2,
+            publish_nodes=[child],
+            host_indices=torch.arange(2),
+            key=child.key,
+            hash_value=["h1"],
+            inflight_tokens=2,
+            source_locked=True,
+        )
+        child.write_through_pending_id = context.write_id
+        cache.ongoing_write_through = {context.write_id: context}
+
+        mem_pool_host = MagicMock()
+        controller = SimpleNamespace(
+            mem_pool_host=mem_pool_host,
+            write_storage=MagicMock(side_effect=RuntimeError("L3 unavailable")),
+        )
+        cache.cache_controller = controller
+
+        with patch("sglang.srt.mem_cache.hiradix_cache.logger.exception"):
+            cache._finish_write_through_ack(context.write_id, release_lock=True)
+
+        self.assertIn(context.write_id, cache.ongoing_write_through)
+        self.assertEqual(list(cache.pending_write_through), [context.write_id])
+        self.assertFalse(context.source_locked)
+        self.assertTrue(torch.equal(context.host_indices, torch.arange(2)))
+        self.assertTrue(context.host_data_ready)
+        cache.dec_lock_ref.assert_called_once_with(child)
+        mem_pool_host.free.assert_not_called()
+
+    def test_later_write_chunk_carries_full_prefix_metadata(self):
+        cache = HiRadixCache.__new__(HiRadixCache)
+        cache.page_size = 2
+        cache.buffer_only = True
+        cache._get_extra_pools = lambda: {}
+        cache.dec_lock_ref = MagicMock()
+
+        root = _node([], values=[])
+        child = _node(list(range(8)), parent=root, values=list(range(10, 18)))
+        context = WriteThroughContext(
+            write_id=child.id,
+            lock_node=child,
+            backup_len=8,
+            publish_nodes=[child],
+            host_indices=torch.arange(4),
+            key=child.key,
+            hash_value=["h1", "h2", "h3", "h4"],
+            prefix_keys=["parent"],
+            durable_tokens=4,
+            inflight_offset=4,
+            inflight_tokens=4,
+            source_locked=True,
+        )
+        cache.ongoing_write_through = {context.write_id: context}
+        cache.ongoing_backup = {}
+        controller = SimpleNamespace(write_storage=MagicMock(return_value=321))
+        cache.cache_controller = controller
+
+        cache._finish_write_through_ack(context.write_id, release_lock=True)
+
+        args = controller.write_storage.call_args.args
+        self.assertEqual(list(args[1]), list(range(4, 8)))
+        self.assertEqual(args[2], ["h3", "h4"])
+        self.assertEqual(args[3], ["parent", "h1", "h2"])
+        self.assertIs(cache.ongoing_backup[321], context)
+        self.assertFalse(context.source_locked)
+        cache.dec_lock_ref.assert_called_once_with(child)
+
+    def test_pending_l3_retry_reuses_host_chunk_without_d2h(self):
+        cache = HiRadixCache.__new__(HiRadixCache)
+        cache.page_size = 2
+        cache.buffer_only = True
+        cache.buffer_write_dispatch_limit = 64
+        cache.pending_write_through = deque()
+        cache.ongoing_backup = {}
+        cache._all_reduce_attn_groups = MagicMock()
+        cache._get_extra_pools = lambda: {}
+        cache.evict_host = MagicMock()
+
+        root = _node([], values=[])
+        child = _node([1, 2], parent=root, values=[10, 11])
+        host_indices = torch.arange(2)
+        context = WriteThroughContext(
+            write_id=child.id,
+            lock_node=child,
+            backup_len=2,
+            publish_nodes=[child],
+            host_indices=host_indices,
+            key=child.key,
+            hash_value=["h1"],
+            inflight_tokens=2,
+            host_data_ready=True,
+        )
+        cache.ongoing_write_through = {context.write_id: context}
+        cache.pending_write_through.append(context.write_id)
+        mem_pool_host = MagicMock()
+        mem_pool_host.size = 2
+        mem_pool_host.available_size.return_value = 0
+        controller = SimpleNamespace(
+            mem_pool_host=mem_pool_host,
+            write=MagicMock(),
+            write_storage=MagicMock(return_value=456),
+        )
+        cache.cache_controller = controller
+
+        cache._dispatch_pending_buffer_writes(1)
+
+        controller.write.assert_not_called()
+        controller.write_storage.assert_called_once()
+        self.assertIs(controller.write_storage.call_args.args[0], host_indices)
+        self.assertEqual(context.storage_operation_id, 456)
+        self.assertIs(cache.ongoing_backup[456], context)
+
+    def test_final_l3_ack_clears_pending_write(self):
+        cache = HiRadixCache.__new__(HiRadixCache)
+        cache.page_size = 2
+        cache.enable_storage_metrics = False
+        cache.ongoing_prefetch = {}
+        cache.ongoing_backup = {}
+        cache.pending_write_through = deque()
+        cache.dec_lock_ref = MagicMock()
+        cache._all_reduce_attn_groups = lambda tensor, op: None
+
+        root = _node([], values=[])
+        first = _node([1, 2], parent=root, values=[10, 11])
+        second = _node([3, 4], parent=first, values=[12, 13])
+        first.storage_backed_tokens = 2
+        context = WriteThroughContext(
+            write_id=first.id,
+            lock_node=second,
+            backup_len=4,
+            publish_nodes=[first, second],
+            host_indices=torch.arange(2),
+            storage_operation_id=124,
+            durable_tokens=2,
+            inflight_offset=2,
+            inflight_tokens=2,
+            host_data_ready=True,
+        )
+        first.write_through_pending_id = context.write_id
+        second.write_through_pending_id = context.write_id
+        cache.ongoing_write_through = {context.write_id: context}
+
+        operation = SimpleNamespace(id=124, completed_tokens=2)
+        mem_pool_host = MagicMock()
+        controller = SimpleNamespace(
+            prefetch_revoke_queue=Queue(),
+            prefetch_hit_queue=Queue(),
+            ack_backup_queue=Queue(),
+            host_mem_release_queue=Queue(),
+            mem_pool_host=mem_pool_host,
+        )
+        controller.ack_backup_queue.put(operation)
+        cache.cache_controller = controller
+        cache.ongoing_backup[operation.id] = context
+
+        cache._drain_storage_control_queues_impl(
+            n_revoke=0,
+            n_hit=0,
+            n_backup=1,
+            n_release=0,
+            log_metrics=False,
+        )
+
+        self.assertTrue(second.storage_backed)
+        self.assertIsNone(first.write_through_pending_id)
+        self.assertIsNone(second.write_through_pending_id)
+        self.assertNotIn(context.write_id, cache.ongoing_write_through)
+        self.assertEqual(list(cache.pending_write_through), [])
+        cache.dec_lock_ref.assert_not_called()
+        mem_pool_host.free.assert_called_once()
 
 
 if __name__ == "__main__":
