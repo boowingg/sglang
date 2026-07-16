@@ -142,6 +142,39 @@ class HiCacheAck(NamedTuple):
     node_ids: List[int]
 
 
+class StreamingLoadAck(NamedTuple):
+    start_event: device_module.Event
+    finish_event: device_module.Event
+    host_indices: torch.Tensor
+    device_indices: torch.Tensor
+
+
+class _StreamingBatchProgress:
+    """Local completion adapter that does not consume a storage operation ID."""
+
+    def __init__(self, request_id: str):
+        self.request_id = request_id
+        self.host_indices: Optional[torch.Tensor] = None
+        self.hash_value: List[str] = []
+        self.prefix_keys: Optional[List[str]] = None
+        self.completed_tokens = 0
+
+    def reset(
+        self,
+        host_indices: torch.Tensor,
+        hash_value: List[str],
+        prefix_keys: Optional[List[str]],
+    ) -> None:
+        self.host_indices = host_indices
+        self.hash_value = hash_value
+        self.prefix_keys = prefix_keys
+        self.completed_tokens = 0
+
+    def increment(self, num_tokens: int) -> bool:
+        self.completed_tokens += num_tokens
+        return True
+
+
 class StorageOperation:
     counter = 0
 
@@ -187,6 +220,12 @@ class PrefetchOperation(StorageOperation):
         self.start_time = time.monotonic()
         self.query_done_time: Optional[float] = None
         self.io_start_time: Optional[float] = None
+        # buffer_only can reuse a bounded host window while streaming the full
+        # L3 hit directly into pre-reserved device slots.
+        self.device_indices: Optional[torch.Tensor] = None
+        self.device_ready_event: Optional[device_module.Event] = None
+        self.stream_to_device = False
+        self.stream_window_tokens = 0
 
         super().__init__(host_indices, token_ids, last_hash, prefix_keys=prefix_keys)
 
@@ -225,6 +264,34 @@ class PrefetchOperation(StorageOperation):
     def mark_io_done(self) -> None:
         with self._lock:
             self.io_done = True
+
+    def configure_device_streaming(
+        self,
+        host_indices: torch.Tensor,
+        device_indices: torch.Tensor,
+        window_tokens: int,
+        device_ready_event: Optional[device_module.Event] = None,
+    ) -> None:
+        with self._lock:
+            if self.io_start_time is not None:
+                raise RuntimeError("Cannot reconfigure an active prefetch operation")
+            if window_tokens <= 0 or len(host_indices) < window_tokens:
+                raise ValueError("Invalid prefetch streaming window")
+            self.host_indices = host_indices
+            self.device_indices = device_indices
+            self.device_ready_event = device_ready_event
+            self.stream_to_device = True
+            self.stream_window_tokens = window_tokens
+
+    def clear_device_streaming(self) -> None:
+        with self._lock:
+            if self.io_start_time is not None:
+                raise RuntimeError("Cannot clear an active prefetch operation")
+            self.host_indices = None
+            self.device_indices = None
+            self.device_ready_event = None
+            self.stream_to_device = False
+            self.stream_window_tokens = 0
 
 
 class HiCacheController:
@@ -287,6 +354,11 @@ class HiCacheController:
         self.storage_stop_event = threading.Event()
 
         self.device = self.mem_pool_device.device
+        self.device_index = getattr(self.device, "index", None)
+        if not isinstance(self.device_index, int):
+            self.device_index = None
+        if self.device_index is None and hasattr(device_module, "current_device"):
+            self.device_index = device_module.current_device()
         self.layer_num = self.mem_pool_device.layer_num
         self.layer_done_counter = LayerDoneCounter(self.layer_num)
         self.mem_pool_device.register_layer_transfer_counter(self.layer_done_counter)
@@ -306,6 +378,7 @@ class HiCacheController:
 
         self.write_stream = device_module.Stream()
         self.load_stream = device_module.Stream()
+        self.prefetch_load_stream = device_module.Stream()
 
         # If a storage backend is provided at startup, treat it as an implicit attach,
         # so init/runtime share the same lifecycle semantics and code paths.
@@ -658,6 +731,7 @@ class HiCacheController:
     def reset(self):
         if self.enable_storage:
             self._stop_storage_threads()
+        self.prefetch_load_stream.synchronize()
 
         self.write_queue.clear()
         self.load_queue.clear()
@@ -757,6 +831,11 @@ class HiCacheController:
             CacheOperation(host_indices, device_indices, node_id, priority)
         )
         return device_indices
+
+    def record_device_ready_event(self):
+        event = device_module.Event()
+        event.record()
+        return event
 
     def move_indices(self, host_indices: torch.Tensor, device_indices: torch.Tensor):
         # move indices to GPU if using kernels, to host if using direct indexing
@@ -909,6 +988,39 @@ class HiCacheController:
         self.prefetch_queue.put(operation)
         return operation
 
+    def prefetch_with_query_result(
+        self,
+        request_id: str,
+        host_indices: Optional[torch.Tensor],
+        new_input_tokens: List[int],
+        hash_values: List[str],
+        last_hash: Optional[str] = None,
+        prefix_keys: Optional[List[str]] = None,
+    ) -> PrefetchOperation:
+        """Build a prefetch from a previously synchronized L3 query result.
+
+        Supplying host indices starts I/O immediately. Query-first callers leave
+        them unset and enqueue the operation after scheduler-side admission.
+        """
+        hit_tokens = len(hash_values) * self.page_size
+        if hit_tokens > len(new_input_tokens):
+            raise ValueError("Storage query result exceeds the prefetch key")
+        if host_indices is not None and len(host_indices) < hit_tokens:
+            raise ValueError("Storage query result exceeds the host allocation")
+
+        operation = PrefetchOperation(
+            request_id,
+            host_indices,
+            new_input_tokens[:hit_tokens],
+            last_hash,
+            prefix_keys,
+        )
+        operation.set_query_result(list(hash_values), hit_tokens)
+        if host_indices is not None:
+            operation.mark_io_started()
+            self.prefetch_buffer.put(operation)
+        return operation
+
     def terminate_prefetch(self, operation):
         operation.mark_terminate()
         return operation.completed_tokens, operation.hash_value
@@ -960,8 +1072,14 @@ class HiCacheController:
                 break  # Operation terminated by controller
 
     def _page_transfer(self, operation):
+        if operation.stream_to_device:
+            self._page_transfer_streaming(operation)
+            return
+
         # Transfer batch by batch
-        prefix_keys = operation.prefix_keys
+        prefix_keys = (
+            list(operation.prefix_keys) if operation.prefix_keys is not None else None
+        )
         for i in range(0, len(operation.hash_value), STORAGE_BATCH_SIZE):
             batch_hashes = operation.hash_value[i : i + STORAGE_BATCH_SIZE]
             batch_host_indices = operation.host_indices[
@@ -988,13 +1106,227 @@ class HiCacheController:
             if operation.is_terminated():
                 break
 
-            if prefix_keys and len(prefix_keys) > 0:
-                prefix_keys += batch_hashes
+            if prefix_keys is not None:
+                prefix_keys.extend(batch_hashes)
+
+    def _enqueue_prefetch_chunk_load(
+        self,
+        host_indices: torch.Tensor,
+        device_indices: torch.Tensor,
+        device_ready_event: Optional[device_module.Event],
+    ) -> StreamingLoadAck:
+        if device_ready_event is not None and self.io_backend in (
+            "direct",
+            "kernel_ascend",
+        ):
+            # These backends materialize device indices on CPU in move_indices().
+            # The indices were produced on the scheduler stream, so complete its
+            # event before a background-thread .cpu() can observe them.
+            device_ready_event.synchronize()
+            device_ready_event = None
+        host_indices, device_indices = self.move_indices(host_indices, device_indices)
+        start_event = device_module.Event()
+        finish_event = device_module.Event()
+        start_event.record()
+
+        with device_module.stream(self.prefetch_load_stream):
+            if device_ready_event is not None:
+                device_ready_event.wait(self.prefetch_load_stream)
+            start_event.wait(self.prefetch_load_stream)
+            for layer_id in range(self.layer_num):
+                self.mem_pool_host.load_to_device_per_layer(
+                    self.mem_pool_device,
+                    host_indices,
+                    device_indices,
+                    layer_id,
+                    self.io_backend,
+                )
+                if self.has_draft and layer_id < self.mem_pool_host_draft.layer_num:
+                    self.mem_pool_host_draft.load_to_device_per_layer(
+                        self.mem_pool_device_draft,
+                        host_indices,
+                        device_indices,
+                        layer_id,
+                        self.io_backend,
+                    )
+            finish_event.record(self.prefetch_load_stream)
+            if host_indices.is_cuda:
+                host_indices.record_stream(self.prefetch_load_stream)
+            if device_indices.is_cuda:
+                device_indices.record_stream(self.prefetch_load_stream)
+
+        return StreamingLoadAck(
+            start_event=start_event,
+            finish_event=finish_event,
+            host_indices=host_indices,
+            device_indices=device_indices,
+        )
+
+    def _page_transfer_streaming(self, operation: PrefetchOperation) -> None:
+        """Pipeline bounded L2 windows into pre-reserved device slots."""
+        if operation.device_indices is None:
+            raise RuntimeError("Streaming prefetch is missing device indices")
+        if operation.stream_window_tokens <= 0:
+            raise RuntimeError("Streaming prefetch has an invalid window")
+        if len(operation.host_indices) < operation.stream_window_tokens:
+            raise RuntimeError("Streaming prefetch host allocation is too small")
+
+        window_tokens = operation.stream_window_tokens
+        host_windows = [
+            operation.host_indices[start : start + window_tokens]
+            for start in range(0, len(operation.host_indices), window_tokens)
+        ]
+        if not host_windows:
+            raise RuntimeError("Streaming prefetch has no host window")
+
+        prefix_keys = (
+            list(operation.prefix_keys) if operation.prefix_keys is not None else None
+        )
+        max_batch_tokens = STORAGE_BATCH_SIZE * self.page_size
+        pending: dict[int, tuple[int, int, StreamingLoadAck]] = {}
+        next_token = 0
+        chunk_index = 0
+        first_error: Optional[Exception] = None
+        device_ready_event = operation.device_ready_event
+        batch_operation = _StreamingBatchProgress(operation.request_id)
+
+        def finish_slot(slot: int, *, publish: bool = True) -> bool:
+            record = pending.pop(slot, None)
+            if record is None:
+                return True
+            offset, num_tokens, ack = record
+            ack.finish_event.synchronize()
+            if not publish:
+                return False
+            if offset != operation.completed_tokens:
+                raise RuntimeError(
+                    "Streaming prefetch H2D completion is not contiguous"
+                )
+            return operation.increment(num_tokens)
+
+        try:
+            total_tokens = len(operation.hash_value) * self.page_size
+            if len(operation.device_indices) < total_tokens:
+                raise RuntimeError("Streaming prefetch device allocation is too small")
+
+            while next_token < total_tokens and not operation.is_terminated():
+                slot = chunk_index % len(host_windows)
+                if not finish_slot(slot):
+                    break
+
+                host_window = host_windows[slot]
+                window_target = min(
+                    len(host_window),
+                    total_tokens - next_token,
+                )
+                window_target -= window_target % self.page_size
+                if window_target <= 0:
+                    raise RuntimeError("Streaming prefetch window is not page aligned")
+
+                filled_tokens = 0
+                while filled_tokens < window_target:
+                    if operation.is_terminated():
+                        break
+                    batch_tokens = min(
+                        max_batch_tokens,
+                        window_target - filled_tokens,
+                    )
+                    batch_tokens -= batch_tokens % self.page_size
+                    if batch_tokens <= 0:
+                        raise RuntimeError(
+                            "Streaming prefetch backend batch is not page aligned"
+                        )
+
+                    page_start = (next_token + filled_tokens) // self.page_size
+                    page_count = batch_tokens // self.page_size
+                    batch_hashes = operation.hash_value[
+                        page_start : page_start + page_count
+                    ]
+                    batch_host_indices = host_window[
+                        filled_tokens : filled_tokens + batch_tokens
+                    ]
+
+                    if self.has_draft:
+                        self._draft_page_get(batch_hashes, batch_host_indices)
+
+                    batch_operation.reset(
+                        batch_host_indices,
+                        batch_hashes,
+                        prefix_keys,
+                    )
+                    extra_info = HiCacheStorageExtraInfo(prefix_keys=prefix_keys)
+                    try:
+                        self.page_get_func(
+                            batch_operation,
+                            batch_hashes,
+                            batch_host_indices,
+                            extra_info,
+                        )
+                    except Exception as exc:
+                        if first_error is None:
+                            first_error = exc
+                        operation.mark_terminate()
+                        break
+                    if batch_operation.completed_tokens != batch_tokens:
+                        operation.mark_terminate()
+                        break
+
+                    filled_tokens += batch_tokens
+                    if prefix_keys is not None:
+                        prefix_keys.extend(batch_hashes)
+
+                # Preserve complete backend batches already fetched before a
+                # later batch failed or cancellation arrived.
+                if filled_tokens <= 0:
+                    break
+
+                chunk_host_indices = host_window[:filled_tokens]
+                chunk_device_indices = operation.device_indices[
+                    next_token : next_token + filled_tokens
+                ]
+
+                ack = self._enqueue_prefetch_chunk_load(
+                    chunk_host_indices,
+                    chunk_device_indices,
+                    device_ready_event,
+                )
+                # Every H2D copy uses the same FIFO stream. Once its first work
+                # item depends on the scheduler event, later chunks inherit the
+                # dependency and do not need to wait on that event again.
+                device_ready_event = None
+                pending[slot] = (next_token, filled_tokens, ack)
+                next_token += filled_tokens
+                chunk_index += 1
+                if filled_tokens < window_target:
+                    break
+        except Exception as exc:
+            if first_error is None:
+                first_error = exc
+            operation.mark_terminate()
+        finally:
+            publish_pending = True
+            for slot, (_offset, _num_tokens, _ack) in sorted(
+                pending.items(), key=lambda item: item[1][0]
+            ):
+                try:
+                    finish_slot(slot, publish=publish_pending)
+                except Exception as exc:
+                    publish_pending = False
+                    if first_error is None:
+                        first_error = exc
+            if first_error is not None:
+                try:
+                    self.prefetch_load_stream.synchronize()
+                except Exception:
+                    pass
+                raise first_error
 
     def prefetch_io_aux_func(self):
         """
         Auxiliary function conducting IO operations for prefetching.
         """
+        if self.device_index is not None and hasattr(device_module, "set_device"):
+            device_module.set_device(self.device_index)
         while not self.storage_stop_event.is_set():
             try:
                 operation = self.prefetch_buffer.get(block=True, timeout=1)
@@ -1009,10 +1341,11 @@ class HiCacheController:
                     )
                 finally:
                     operation.mark_io_done()
-                    # The scheduler owns completed pages. Return only the unused tail.
-                    self.append_host_mem_release(
-                        operation.host_indices[operation.completed_tokens :]
-                    )
+                    if not operation.stream_to_device:
+                        # The scheduler owns completed pages. Return only the unused tail.
+                        self.append_host_mem_release(
+                            operation.host_indices[operation.completed_tokens :]
+                        )
             except Empty:
                 continue
 
@@ -1029,7 +1362,9 @@ class HiCacheController:
     def _storage_hit_query(self, operation) -> tuple[list[str], int]:
         last_hash = operation.last_hash
         tokens_to_fetch = operation.token_ids
-        prefix_keys = operation.prefix_keys.copy() if operation.prefix_keys else None
+        prefix_keys = (
+            operation.prefix_keys.copy() if operation.prefix_keys is not None else None
+        )
 
         storage_query_count = 0
         hash_value = []
@@ -1038,6 +1373,8 @@ class HiCacheController:
         )
 
         for start in range(0, len(page_hashes), STORAGE_BATCH_SIZE):
+            if operation.is_terminated():
+                break
             batch_hashes = page_hashes[start : start + STORAGE_BATCH_SIZE]
             extra_info = HiCacheStorageExtraInfo(prefix_keys=prefix_keys)
             hit_page_num = self.storage_backend.batch_exists(batch_hashes, extra_info)
@@ -1045,8 +1382,8 @@ class HiCacheController:
             storage_query_count += hit_page_num * self.page_size
             if hit_page_num < len(batch_hashes):
                 break
-            if prefix_keys and len(prefix_keys) > 0:
-                prefix_keys += batch_hashes
+            if prefix_keys is not None:
+                prefix_keys.extend(batch_hashes)
 
         return hash_value, storage_query_count
 
@@ -1218,7 +1555,9 @@ class HiCacheController:
     # Backup batch by batch
     def _page_backup(self, operation):
         # Backup batch by batch
-        prefix_keys = operation.prefix_keys
+        prefix_keys = (
+            list(operation.prefix_keys) if operation.prefix_keys is not None else None
+        )
         for i in range(0, len(operation.hash_value), STORAGE_BATCH_SIZE):
             batch_hashes = operation.hash_value[i : i + STORAGE_BATCH_SIZE]
             batch_host_indices = operation.host_indices[
@@ -1238,8 +1577,8 @@ class HiCacheController:
             if self.has_draft:
                 self._draft_page_set(batch_hashes, batch_host_indices)
 
-            if prefix_keys and len(prefix_keys) > 0:
-                prefix_keys += batch_hashes
+            if prefix_keys is not None:
+                prefix_keys.extend(batch_hashes)
             operation.completed_tokens += self.page_size * len(batch_hashes)
 
     def backup_thread_func(self):

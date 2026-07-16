@@ -12,6 +12,9 @@ from sglang.srt.disaggregation.decode import (  # noqa: E402
     DecodePreallocQueue,
     SchedulerDisaggregationDecodeMixin,
 )
+from sglang.srt.disaggregation.decode_hicache_mixin import (  # noqa: E402
+    DecodePrefixMatch,
+)
 from sglang.srt.disaggregation.utils import DisaggregationMode  # noqa: E402
 from sglang.srt.managers.schedule_batch import FINISH_ABORT, Req  # noqa: E402
 from sglang.srt.managers.scheduler import Scheduler  # noqa: E402
@@ -190,6 +193,51 @@ class TestDecodePreallocQueuePriority(unittest.TestCase):
             ],
         )
         self.assertEqual(failed, [])
+
+    def test_hicache_registration_precedes_pd_boundary_allocation(self):
+        decode_req = self._new_decode_req("req", 1)
+        decode_req.req.origin_input_ids = list(range(6))
+        decode_req.req.last_node = object()
+        queue = self._new_queue([decode_req])
+        queue.scheduler.server_args.disaggregation_decode_enable_radix_cache = True
+        queue.scheduler.enable_decode_hicache = True
+        queue._allocatable_token_budgets = MagicMock(return_value=1000)
+
+        prefix_match = DecodePrefixMatch(
+            prefix_indices=torch.arange(2, dtype=torch.int64),
+            l2_host_hit_length=0,
+            l3_storage_hit_length=4,
+            last_device_node=decode_req.req.last_node,
+            l2_fallback_hit_length=2,
+        )
+        queue._match_prefix_and_lock = MagicMock(return_value=prefix_match)
+        call_order = []
+
+        def start_prefetch(_req, match):
+            call_order.append("prefetch")
+            match.l3_storage_hit_length = 0
+            match.l2_host_hit_length = match.l2_fallback_hit_length
+
+        def pre_alloc(req, prefix_indices=None, prefix_len=0, total_prefix_len=0):
+            call_order.append("allocate")
+            return torch.arange(
+                len(req.origin_input_ids) - total_prefix_len,
+                dtype=torch.int64,
+            )
+
+        queue._start_hicache_prefetch = MagicMock(side_effect=start_prefetch)
+        queue._pre_alloc = MagicMock(side_effect=pre_alloc)
+
+        preallocated, failed = queue.pop_preallocated()
+
+        self.assertEqual(call_order, ["prefetch", "allocate"])
+        self.assertEqual(preallocated, [decode_req])
+        self.assertEqual(failed, [])
+        self.assertEqual(queue._pre_alloc.call_args.args[3], 4)
+        self.assertEqual(
+            decode_req.kv_receiver.send_metadata.call_args.kwargs["decode_prefix_len"],
+            4,
+        )
 
     def test_failed_request_indices_stay_valid_after_priority_sort(self):
         failed_low = self._new_decode_req("failed-low", 1, failed=True)

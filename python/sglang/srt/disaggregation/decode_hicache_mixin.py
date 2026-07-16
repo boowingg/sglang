@@ -27,7 +27,9 @@ class DecodePrefixMatch:
     l3_storage_hit_length: int
     last_device_node: Any
     last_host_node: Any = None
+    l3_hash_values: Optional[List[str]] = None
     prefetch_registered: bool = False
+    l2_fallback_hit_length: int = 0
 
     @property
     def l1_prefix_len(self) -> int:
@@ -69,11 +71,30 @@ class DecodeHiCachePreallocMixin:
         l2_host_hit_length = result.host_hit_length
 
         l3_storage_hit_length = 0
+        l3_hash_values: List[str] = []
+        l2_fallback_hit_length = l2_host_hit_length
         last_host_node = None
         if self.scheduler.enable_decode_hicache:
-            last_host_node = result.last_host_node
-            if last_host_node.backuped or last_host_node is self.tree_cache.root_node:
-                matched_len = l1_prefix_len + l2_host_hit_length
+            buffer_only = getattr(self.tree_cache, "buffer_only", False)
+            last_host_node = (
+                result.last_device_node if buffer_only else result.last_host_node
+            )
+            can_anchor_prefetch = (
+                not last_host_node.evicted
+                if buffer_only
+                else (
+                    last_host_node.backuped
+                    or last_host_node is self.tree_cache.root_node
+                )
+            )
+            if can_anchor_prefetch:
+                # Streaming must start at a contiguous device prefix. If an old
+                # transient L2 entry is present, query it again from L3 together
+                # with the following suffix instead of publishing a device child
+                # below an evicted radix node.
+                matched_len = (
+                    l1_prefix_len if buffer_only else l1_prefix_len + l2_host_hit_length
+                )
                 suffix_tokens = req.origin_input_ids[matched_len:]
                 last_hash = last_host_node.get_last_hash_value()
                 prefix_keys = (
@@ -81,12 +102,23 @@ class DecodeHiCachePreallocMixin:
                     if self.tree_cache.hicache_storage_pass_prefix_keys
                     else None
                 )
-                l3_storage_hit_length = self.tree_cache.query_storage_hit_length(
+                (
+                    l3_hash_values,
+                    l3_storage_hit_length,
+                ) = self.tree_cache.query_storage_hit(
                     last_host_node,
                     suffix_tokens,
                     last_hash,
                     prefix_keys,
                 )
+                if buffer_only and l3_storage_hit_length > 0:
+                    if l3_storage_hit_length >= l2_host_hit_length:
+                        l2_fallback_hit_length = l2_host_hit_length
+                        l2_host_hit_length = 0
+                    else:
+                        # Preserve the longer L2 prefix if L3 no longer covers it.
+                        l3_storage_hit_length = 0
+                        l3_hash_values = []
 
         return DecodePrefixMatch(
             prefix_indices=prefix_indices,
@@ -94,7 +126,20 @@ class DecodeHiCachePreallocMixin:
             l3_storage_hit_length=l3_storage_hit_length,
             last_device_node=result.last_device_node,
             last_host_node=last_host_node if l3_storage_hit_length > 0 else None,
+            l3_hash_values=(l3_hash_values if l3_storage_hit_length > 0 else None),
+            l2_fallback_hit_length=l2_fallback_hit_length,
         )
+
+    @staticmethod
+    def _degrade_hicache_prefetch(prefix_match: DecodePrefixMatch) -> None:
+        prefix_match.l3_storage_hit_length = 0
+        prefix_match.l3_hash_values = None
+        prefix_match.l2_host_hit_length = getattr(
+            prefix_match,
+            "l2_fallback_hit_length",
+            prefix_match.l2_host_hit_length,
+        )
+        prefix_match.prefetch_registered = False
 
     def _start_hicache_prefetch(
         self, req: Req, prefix_match: Optional[DecodePrefixMatch]
@@ -111,6 +156,7 @@ class DecodeHiCachePreallocMixin:
             return
         try:
             node = prefix_match.last_host_node
+            previous_context = self.tree_cache.ongoing_prefetch.get(req.rid)
             matched_len = prefix_match.l1_prefix_len + prefix_match.l2_host_hit_length
             suffix = req.origin_input_ids[
                 matched_len : matched_len + prefix_match.l3_storage_hit_length
@@ -122,19 +168,36 @@ class DecodeHiCachePreallocMixin:
                 else None
             )
             self.tree_cache.prefetch_from_storage(
-                req.rid, node, suffix, last_hash, prefix_keys
+                req.rid,
+                node,
+                suffix,
+                last_hash,
+                prefix_keys,
+                known_hash_values=prefix_match.l3_hash_values,
+                require_full_completion=True,
             )
+            registered_context = self.tree_cache.ongoing_prefetch.get(req.rid)
             prefix_match.prefetch_registered = (
-                req.rid in self.tree_cache.ongoing_prefetch
+                registered_context is not None
+                and registered_context is not previous_context
             )
+            if not prefix_match.prefetch_registered:
+                if (
+                    previous_context is not None
+                    and registered_context is previous_context
+                ):
+                    # Do not leave an older operation for the same rid holding
+                    # L1/L2 ownership while this PD request falls back. The
+                    # cache defers the actual free to its TP-synchronized reaper.
+                    self.tree_cache.release_aborted_request(req.rid)
+                self._degrade_hicache_prefetch(prefix_match)
         except Exception as e:
             logger.warning(
                 "HiCache L3 prefetch failed for rid=%s: %s; falling back to L2-only LoadingBack",
                 req.rid,
                 e,
             )
-            prefix_match.l3_storage_hit_length = 0
-            prefix_match.prefetch_registered = False
+            self._degrade_hicache_prefetch(prefix_match)
 
     def _hicache_pending_restore_tokens(self) -> int:
         """Total device tokens reserved for pending HiCache L2/L3 load_back."""
@@ -188,9 +251,24 @@ class DecodeHiCacheTransferMixin:
         """
         pm = dr.prefix_match
 
-        # Wait for L3 -> L2 prefetch to drain (skip when no L3 hit).
+        # Wait for the L3 restore to drain (skip when there is no L3 hit).
         if pm.l3_storage_hit_length > 0:
-            if not self.tree_cache.check_prefetch_progress(dr.req.rid):
+            buffer_only = getattr(self.tree_cache, "buffer_only", False)
+            if buffer_only:
+                active_streams = self.tree_cache.streaming_prefetch_active
+                allow_device_allocation = (
+                    not active_streams or dr.req.rid in active_streams
+                )
+                prefetch_done = self.tree_cache.check_prefetch_progress(
+                    dr.req.rid,
+                    allow_device_allocation=allow_device_allocation,
+                    # DecodePreallocQueue already subtracts restore_token_count
+                    # from its admission budget, so no second reservation is needed.
+                    device_admission_tokens=0,
+                )
+            else:
+                prefetch_done = self.tree_cache.check_prefetch_progress(dr.req.rid)
+            if not prefetch_done:
                 return False
             self.tree_cache.pop_prefetch_loaded_tokens(dr.req.rid)
 

@@ -2291,21 +2291,24 @@ class Scheduler(
             req.init_next_round_input(self.tree_cache, cow_mamba=False)
             buffer_only = getattr(self.tree_cache, "buffer_only", False)
             if buffer_only:
-                last_host_node = (
-                    req.last_host_node
-                    if req.host_hit_length > 0
-                    else req.last_node
-                )
+                # A direct L3->L1 stream must start at the last contiguous L1
+                # node. Re-fetch any transient L2 gap as part of the L3 suffix.
+                last_host_node = req.last_node
             else:
                 last_host_node = req.last_host_node
             can_anchor_prefetch = (
-                last_host_node.backuped
-                or last_host_node is self.tree_cache.root_node
-                or (buffer_only and not last_host_node.evicted)
+                not last_host_node.evicted
+                if buffer_only
+                else (
+                    last_host_node.backuped
+                    or last_host_node is self.tree_cache.root_node
+                )
             )
             if can_anchor_prefetch:
                 last_hash = last_host_node.get_last_hash_value()
-                matched_len = len(req.prefix_indices) + req.host_hit_length
+                matched_len = len(req.prefix_indices)
+                if not buffer_only:
+                    matched_len += req.host_hit_length
                 match_end = req._compute_max_prefix_len(
                     len(req.full_untruncated_fill_ids)
                 )
@@ -2908,7 +2911,26 @@ class Scheduler(
                     break
 
             if self.enable_hicache_storage:
-                prefetch_done = self.tree_cache.check_prefetch_progress(req.rid)
+                buffer_only = getattr(self.tree_cache, "buffer_only", False)
+                if buffer_only:
+                    active_streams = self.tree_cache.streaming_prefetch_active
+                    owns_active_stream = req.rid in active_streams
+                    device_admission_tokens = None
+                    allow_device_allocation = owns_active_stream
+                    if not active_streams:
+                        device_admission_tokens = (
+                            adder.hicache_device_prefetch_required_tokens(req)
+                        )
+                        allow_device_allocation = (
+                            device_admission_tokens < adder.rem_total_tokens
+                        )
+                    prefetch_done = self.tree_cache.check_prefetch_progress(
+                        req.rid,
+                        allow_device_allocation=allow_device_allocation,
+                        device_admission_tokens=device_admission_tokens,
+                    )
+                else:
+                    prefetch_done = self.tree_cache.check_prefetch_progress(req.rid)
                 if not prefetch_done:
                     # skip staging requests that are ongoing prefetch
                     continue

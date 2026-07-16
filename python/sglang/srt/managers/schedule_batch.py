@@ -2210,13 +2210,20 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
                     # - storage_hit_length = tokens loaded from storage backend (L3 hits)
                     # - device_portion = len(prefix_indices) - host_hit_length
                     #
-                    # Storage hits are now tracked via scheduler after prefetch completes.
-                    # storage_hit_length is set by scheduler.pop_prefetch_loaded_tokens()
+                    # Storage hits may arrive through the legacy L3->L2->L1 path
+                    # or directly through buffer-only streaming. In the latter
+                    # case host_hit_length is zero even though the tail of the
+                    # device prefix came from L3.
                     host_total = req.host_hit_length
-                    # Clamp storage to host_total to handle edge cases
-                    storage_portion = min(host_total, req.storage_hit_length)
-                    host_portion = host_total - storage_portion
-                    device_portion = max(0, len(req.prefix_indices) - host_total)
+                    storage_portion = min(
+                        len(req.prefix_indices), req.storage_hit_length
+                    )
+                    host_storage_portion = min(host_total, storage_portion)
+                    host_portion = host_total - host_storage_portion
+                    device_portion = max(
+                        0,
+                        len(req.prefix_indices) - host_portion - storage_portion,
+                    )
 
                     req.cached_tokens_device = device_portion
                     req.cached_tokens_host = host_portion

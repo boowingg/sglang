@@ -87,14 +87,47 @@ The write-back mechanism is responsible for moving frequently accessed KV caches
 
 `--hicache-host-memory-mode buffer_only` uses host memory only as a bounded
 transfer buffer between L1 and L3. L1 writes retain their temporary host pages
-until L3 acknowledges them; L3 reads query the exact hit length before
-allocating pages and release those pages after asynchronous H2D completes.
+until L3 acknowledges them. L3 reads first query the exact hit length without
+reserving data pages. After scheduler admission, the read reserves its GPU
+destination and reuses one or two fixed L2 windows until the continuous prefix
+has moved to L1.
 
 Reads and writes share one pool. Reads preserve a 20% soft write reserve while
 writes are pending, but may borrow the full pool when there is no write
-pressure. Queued query tokens are capped at one host-pool capacity to avoid
-unbounded L3 metadata pressure. L2 residency and L3 durability are tracked independently, so partial
-or failed writes never publish an unacknowledged suffix.
+pressure. Only one streamed read enters the data path at a time. Metadata
+queries have independent operation/token limits. The active request reserves
+its remaining L1 input/decode budget, so unrelated requests can still run
+against the remainder while later L3 reads wait without reserving L1/L2.
+Waiting queries do not pin their original L1 anchor; dispatch locks the deepest
+still-resident ancestor and rebuilds the suffix after an eviction. Writes are
+dispatched first, and new queries or not-yet-started data streams pause under
+write retry/queue pressure while an active stream drains.
+L2 residency and L3 durability are tracked independently. Partial or failed
+writes release only acknowledged pages and retain the failed suffix for retry.
+
+The following keys in `--hicache-storage-backend-extra-config` tune the stream:
+
+* `prefetch_stream_window_tokens` sets the page-aligned upper bound for each L2
+  window (default: `1024` tokens); admission may use a smaller window when
+  fewer pages are currently allocatable.
+* `prefetch_stream_buffer_count` selects one or two windows (default: `2`). Two
+  windows overlap an L3 read with the previous window's H2D transfer. Each
+  window may contain multiple backend batches before one H2D submission.
+* If L2 cannot hold one minimum stream window, or L1 is smaller than the
+  prefetch threshold, storage data restoration is bypassed so `wait_complete`
+  cannot wait forever on an impossible allocation.
+* `prefetch_query_max_ops` limits metadata queries that are in flight or waiting
+  for stream admission (default: `8`).
+* `prefetch_query_max_tokens` limits tokens represented by those queries
+  (default: `32768`). A single oversized query is allowed when it is the only
+  active query, avoiding permanent head-of-line starvation.
+
+The bounded window removes whole-prefix L2 allocation failures, but does not
+remove bandwidth limits. Read overload becomes queueing or a prefetch timeout;
+PD prefixes already omitted from the prefill transfer instead require full I/O
+completion and ignore `best_effort`/`timeout`, since incomplete KV cannot be
+recomputed on decode. A guaranteed write that cannot reach L3 still requires
+L1/L2 retention and eventual admission backpressure.
 
 The initial implementation supports Python `HiRadixCache`, MHA/GQA KV pools,
 startup L3 configuration, and `write_through`. Unsupported cache types, write
@@ -151,7 +184,7 @@ Specifically, **LMCache**, an efficient KV cache layer for enterprise-scale LLM 
 
 - **`--hicache-ratio HICACHE_RATIO`**: The ratio of host KV cache size to device-pool size. A ratio above 1 remains recommended for the default `cache` mode. `buffer_only` may use a smaller ratio because host memory does not retain an L1-sized replica.
 
-- **`--hicache-size HICACHE_SIZE`**: The host KV cache size in gigabytes per rank. It overrides `hicache-ratio`. In `buffer_only` mode this controls transfer concurrency rather than retained L2 coverage and may be smaller than L1.
+- **`--hicache-size HICACHE_SIZE`**: The host KV cache size in gigabytes per rank. It overrides `hicache-ratio`. In `buffer_only` mode it covers reliable-write staging plus the configured read windows, not complete L3-hit prefixes, and may be smaller than L1.
 
 **Note**: `--hicache-ratio` and `--hicache-size` are two critical parameters. In general, a larger HiCache size leads to a higher cache hit rate, which improves prefill performance. However, the relationship between cache size and hit rate is not linear. Once most reusable KV data—especially hot tokens—are already cached, further increasing the size may yield only marginal performance gains. Users can set these parameters based on their workload characteristics and performance requirements.
 

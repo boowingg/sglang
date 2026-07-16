@@ -128,7 +128,19 @@ class PrefetchOperation(StorageOperation):
         self.request_id = request_id
         self._lock = threading.Lock()
         self._terminated_flag = False
+        self.query_first = host_indices is None
+        self.query_done = False
+        self.io_done = False
+        self.storage_hit_count = 0
         self.start_time = time.monotonic()
+        self.query_done_time: Optional[float] = None
+        self.io_start_time: Optional[float] = None
+        # Keep the base controller's prefetch interface uniform. Hybrid pools
+        # do not currently use buffer-only device streaming.
+        self.device_indices: Optional[torch.Tensor] = None
+        self.device_ready_event = None
+        self.stream_to_device = False
+        self.stream_window_tokens = 0
         super().__init__(
             host_indices,
             token_ids,
@@ -141,6 +153,8 @@ class PrefetchOperation(StorageOperation):
     def increment(self, num_tokens: int):
         with self._lock:
             if self._terminated_flag:
+                if self.query_first:
+                    self.completed_tokens += num_tokens
                 return False
             self.completed_tokens += num_tokens
             return True
@@ -150,7 +164,24 @@ class PrefetchOperation(StorageOperation):
             self._terminated_flag = True
 
     def is_terminated(self) -> bool:
-        return self._terminated_flag
+        with self._lock:
+            return self._terminated_flag
+
+    def set_query_result(self, hash_value: List[str], hit_count: int) -> None:
+        with self._lock:
+            self.hash_value = hash_value
+            self.storage_hit_count = hit_count
+            self.query_done = True
+            self.query_done_time = time.monotonic()
+
+    def mark_io_started(self) -> None:
+        with self._lock:
+            if self.io_start_time is None:
+                self.io_start_time = time.monotonic()
+
+    def mark_io_done(self) -> None:
+        with self._lock:
+            self.io_done = True
 
 
 class HybridCacheController(BaseHiCacheController):
@@ -590,7 +621,11 @@ class HybridCacheController(BaseHiCacheController):
         )
 
         extra_info = HiCacheStorageExtraInfo(
-            prefix_keys=operation.prefix_keys.copy() if operation.prefix_keys else None
+            prefix_keys=(
+                operation.prefix_keys.copy()
+                if operation.prefix_keys is not None
+                else None
+            )
         )
         if operation.pool_transfers:
             hit_result = self.storage_backend.batch_exists_v2(

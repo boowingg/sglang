@@ -584,7 +584,12 @@ class PrefillAdder:
                 self.token_to_kv_pool_allocator.available_size()
                 + self.tree_cache.evictable_size()
             )
-        return available_and_evictable - self.rem_total_token_offset
+        hicache_reservation = getattr(
+            self.tree_cache, "streaming_prefetch_reservation_tokens", 0
+        )
+        return (
+            available_and_evictable - self.rem_total_token_offset - hicache_reservation
+        )
 
     @property
     def rem_swa_tokens(self):
@@ -617,7 +622,24 @@ class PrefillAdder:
                 + self.tree_cache.evictable_size()
             )
 
-        return available_and_evictable - self.cur_rem_token_offset
+        hicache_reservation = getattr(
+            self.tree_cache, "streaming_prefetch_reservation_tokens", 0
+        )
+        return available_and_evictable - self.cur_rem_token_offset - hicache_reservation
+
+    def hicache_device_prefetch_required_tokens(self, req: Req) -> int:
+        """Return the full L1 budget needed to admit a streaming L3 hit."""
+        max_new = min(
+            max(req.sampling_params.max_new_tokens - len(req.output_ids), 0),
+            CLIP_MAX_NEW_TOKENS,
+        )
+        return (
+            len(req.full_untruncated_fill_ids)
+            - len(req.prefix_indices)
+            + max_new
+            + self.page_size
+            + self._mamba_gap_budget_for_req(req)
+        )
 
     def _swa_budget_for_req(
         self, extend_input_len: int, swa_host_hit_length: int = 0
