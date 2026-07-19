@@ -1,0 +1,11 @@
+{
+  "name": "hicache-source-guide-web",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "build:content": "node scripts/build-content.mjs",
+    "check": "node scripts/check-site.mjs",
+    "dev": "node scripts/dev-server.mjs"
+  }
+}

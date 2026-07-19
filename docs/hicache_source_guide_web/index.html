@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="HiCache 源码剖析交互版：从请求生命周期理解 L1、L2、L3、Radix Tree 与并发状态机。"
+    />
+    <meta name="color-scheme" content="light dark" />
+    <title>HiCache 源码剖析</title>
+    <script>
+      (() => {
+        let saved = "system";
+        try {
+          const stored = localStorage.getItem("hicache-guide-theme");
+          if (["system", "light", "dark"].includes(stored)) saved = stored;
+        } catch {
+          // A blocked storage API must not prevent the reader from starting.
+        }
+        const dark =
+          saved === "dark" ||
+          (saved === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+        document.documentElement.dataset.theme = dark ? "dark" : "light";
+        document.documentElement.dataset.themeMode = saved;
+      })();
+    </script>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="reading-progress" aria-hidden="true">
+      <div id="reading-progress-bar"></div>
+    </div>
+
+    <header class="topbar">
+      <div class="topbar-leading">
+        <button
+          class="icon-button mobile-only"
+          id="nav-toggle"
+          type="button"
+          aria-label="打开章节目录"
+          aria-controls="chapter-sidebar"
+          aria-expanded="false"
+          title="章节目录"
+        >
+          <i data-lucide="panel-left"></i>
+        </button>
+        <a class="brand" href="#/README" aria-label="返回全书导览">
+          <span class="brand-mark" aria-hidden="true">HC</span>
+          <span>
+            <strong>HiCache 源码剖析</strong>
+            <small>交互阅读版</small>
+          </span>
+        </a>
+      </div>
+
+      <button class="search-trigger" id="search-trigger" type="button">
+        <i data-lucide="search"></i>
+        <span>搜索章节、函数与术语</span>
+      </button>
+
+      <div class="topbar-actions">
+        <button
+          class="icon-button mobile-only"
+          id="mobile-search-button"
+          type="button"
+          aria-label="搜索"
+          title="搜索"
+        >
+          <i data-lucide="search"></i>
+        </button>
+        <button
+          class="icon-button"
+          id="bookmark-button"
+          type="button"
+          aria-label="收藏当前章节"
+          title="收藏当前章节"
+        >
+          <i data-lucide="bookmark"></i>
+        </button>
+        <button
+          class="icon-button desktop-only"
+          id="focus-button"
+          type="button"
+          aria-label="切换专注阅读"
+          title="专注阅读"
+        >
+          <i data-lucide="panels-top-left"></i>
+        </button>
+        <button
+          class="icon-button"
+          id="theme-button"
+          type="button"
+          aria-label="切换主题"
+          title="切换主题"
+        >
+          <i data-lucide="sun-moon"></i>
+        </button>
+      </div>
+    </header>
+
+    <div class="app-shell" id="app-shell">
+      <aside class="chapter-sidebar" id="chapter-sidebar" aria-label="全书章节">
+        <div class="sidebar-summary">
+          <div class="sidebar-summary-row">
+            <span>全书进度</span>
+            <strong id="book-progress-label">0%</strong>
+          </div>
+          <div class="meter"><span id="book-progress-bar"></span></div>
+          <p id="book-meta">正在读取目录...</p>
+        </div>
+        <nav id="chapter-navigation"></nav>
+      </aside>
+
+      <button
+        class="sidebar-backdrop"
+        id="sidebar-backdrop"
+        type="button"
+        aria-label="关闭章节目录"
+      ></button>
+
+      <main class="reader-main" id="reader-main" tabindex="-1">
+        <div class="chapter-status" id="chapter-status" aria-live="polite"></div>
+        <article class="markdown-body" id="article">
+          <div class="loading-state">
+            <span class="loading-mark" aria-hidden="true"></span>
+            <p>正在建立源码地图...</p>
+          </div>
+        </article>
+        <nav class="chapter-pager" id="chapter-pager" aria-label="相邻章节"></nav>
+        <footer class="reader-footer">
+          <span>正文由 Markdown 构建</span>
+          <span id="source-snapshot"></span>
+        </footer>
+      </main>
+
+      <aside class="page-aside" id="page-aside" aria-label="本章目录">
+        <section>
+          <div class="aside-heading">本章目录</div>
+          <nav id="page-toc"></nav>
+        </section>
+        <section class="chapter-facts" id="chapter-facts"></section>
+        <section>
+          <button class="aside-command" id="glossary-command" type="button">
+            <i data-lucide="book-open-check"></i>
+            <span><strong>术语快速查找</strong><small>跳到术语表搜索</small></span>
+            <i data-lucide="chevron-right"></i>
+          </button>
+        </section>
+      </aside>
+    </div>
+
+    <dialog class="search-dialog" id="search-dialog">
+      <div class="search-box">
+        <i data-lucide="search"></i>
+        <input
+          id="search-input"
+          type="search"
+          autocomplete="off"
+          spellcheck="false"
+          placeholder="输入 cache_finished_req、L3、ACK..."
+          aria-label="全文搜索"
+        />
+        <button class="icon-button" id="search-close" type="button" aria-label="关闭搜索">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <div class="search-scope" role="group" aria-label="搜索范围">
+        <button type="button" data-scope="core" class="active" aria-pressed="true">正文</button>
+        <button type="button" data-scope="all" aria-pressed="false">正文 + 附录</button>
+        <span id="search-count"></span>
+      </div>
+      <div class="search-results" id="search-results"></div>
+    </dialog>
+
+    <dialog class="diagram-dialog" id="diagram-dialog">
+      <div class="dialog-toolbar">
+        <strong>图示全屏查看</strong>
+        <button class="icon-button" data-dialog-close type="button" aria-label="关闭图示">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <div class="diagram-dialog-content" id="diagram-dialog-content"></div>
+    </dialog>
+
+    <dialog class="source-dialog" id="source-dialog">
+      <div class="dialog-toolbar">
+        <div>
+          <strong id="source-dialog-title">源码</strong>
+          <small id="source-dialog-path"></small>
+        </div>
+        <button class="icon-button" data-source-close type="button" aria-label="关闭源码">
+          <i data-lucide="x"></i>
+        </button>
+      </div>
+      <pre class="source-preview"><code id="source-dialog-code"></code></pre>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="./vendor/lucide.min.js"></script>
+    <script src="./vendor/mermaid.min.js"></script>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

@@ -1,0 +1,7091 @@
+{
+  "entries": [
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 45,
+          "name": "TreeCacheBuildContext",
+          "start_line": 29
+        }
+      ],
+      "function_count": 6,
+      "functions": [
+        {
+          "end_line": 67,
+          "name": "register_radix_cache_backend",
+          "start_line": 53
+        },
+        {
+          "end_line": 71,
+          "name": "get_radix_cache_factory",
+          "start_line": 70
+        },
+        {
+          "end_line": 75,
+          "name": "registered_radix_cache_backends",
+          "start_line": 74
+        },
+        {
+          "end_line": 162,
+          "name": "default_radix_cache_factory",
+          "start_line": 78
+        },
+        {
+          "end_line": 195,
+          "name": "_create_unified_radix_cache",
+          "start_line": 165
+        },
+        {
+          "end_line": 235,
+          "name": "create_tree_cache",
+          "start_line": 198
+        }
+      ],
+      "output": "A01-registry.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/registry.py",
+      "source_sha256": "37ec1e9aa61c26c458f3be5c10549d358e843227441333978f6809c7b9dcf56b"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 21,
+          "name": "KVCacheBuildResult",
+          "start_line": 11
+        }
+      ],
+      "function_count": 3,
+      "functions": [
+        {
+          "end_line": 63,
+          "name": "get_draft_kv_pool",
+          "start_line": 47
+        },
+        {
+          "end_line": 120,
+          "name": "maybe_register_hicache_draft",
+          "start_line": 66
+        },
+        {
+          "end_line": 261,
+          "name": "build_kv_cache",
+          "start_line": 123
+        }
+      ],
+      "output": "A02-kv-cache-builder.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/kv_cache_builder.py",
+      "source_sha256": "73616be55fbbb5ff74908af7ebc8cc028a69c79a5438fada4357ef2dbd73f7e8"
+    },
+    {
+      "class_count": 12,
+      "classes": [
+        {
+          "end_line": 39,
+          "name": "PrefixCacheTrait",
+          "start_line": 34
+        },
+        {
+          "end_line": 50,
+          "name": "MatchPrefixParams",
+          "start_line": 42
+        },
+        {
+          "end_line": 69,
+          "name": "InsertParams",
+          "start_line": 53
+        },
+        {
+          "end_line": 80,
+          "name": "InsertResult",
+          "start_line": 72
+        },
+        {
+          "end_line": 89,
+          "name": "EvictParams",
+          "start_line": 83
+        },
+        {
+          "end_line": 98,
+          "name": "EvictResult",
+          "start_line": 92
+        },
+        {
+          "end_line": 124,
+          "name": "IncLockRefResult",
+          "start_line": 101
+        },
+        {
+          "end_line": 135,
+          "name": "DecLockRefParams",
+          "start_line": 127
+        },
+        {
+          "end_line": 142,
+          "name": "DecLockRefResult",
+          "start_line": 138
+        },
+        {
+          "end_line": 152,
+          "name": "InitLoadBackParams",
+          "start_line": 145
+        },
+        {
+          "end_line": 190,
+          "name": "MatchResult",
+          "start_line": 155
+        },
+        {
+          "end_line": 373,
+          "name": "BasePrefixCache",
+          "start_line": 211
+        }
+      ],
+      "function_count": 39,
+      "functions": [
+        {
+          "end_line": 124,
+          "name": "IncLockRefResult.to_dec_params",
+          "start_line": 115
+        },
+        {
+          "end_line": 208,
+          "name": "zero_match_result",
+          "start_line": 193
+        },
+        {
+          "end_line": 230,
+          "name": "BasePrefixCache.init_metrics_collector",
+          "start_line": 218
+        },
+        {
+          "end_line": 237,
+          "name": "BasePrefixCache.update_eviction_metrics",
+          "start_line": 232
+        },
+        {
+          "end_line": 241,
+          "name": "BasePrefixCache.reset",
+          "start_line": 239
+        },
+        {
+          "end_line": 245,
+          "name": "BasePrefixCache.match_prefix",
+          "start_line": 243
+        },
+        {
+          "end_line": 248,
+          "name": "BasePrefixCache.supports_fast_match_prefix",
+          "start_line": 247
+        },
+        {
+          "end_line": 252,
+          "name": "BasePrefixCache.cache_finished_req",
+          "start_line": 250
+        },
+        {
+          "end_line": 256,
+          "name": "BasePrefixCache.cache_unfinished_req",
+          "start_line": 254
+        },
+        {
+          "end_line": 260,
+          "name": "BasePrefixCache.evict",
+          "start_line": 258
+        },
+        {
+          "end_line": 264,
+          "name": "BasePrefixCache.inc_lock_ref",
+          "start_line": 262
+        },
+        {
+          "end_line": 270,
+          "name": "BasePrefixCache.dec_lock_ref",
+          "start_line": 266
+        },
+        {
+          "end_line": 273,
+          "name": "BasePrefixCache.evictable_size",
+          "start_line": 272
+        },
+        {
+          "end_line": 276,
+          "name": "BasePrefixCache.full_evictable_size",
+          "start_line": 275
+        },
+        {
+          "end_line": 279,
+          "name": "BasePrefixCache.swa_evictable_size",
+          "start_line": 278
+        },
+        {
+          "end_line": 282,
+          "name": "BasePrefixCache.protected_size",
+          "start_line": 281
+        },
+        {
+          "end_line": 285,
+          "name": "BasePrefixCache.full_protected_size",
+          "start_line": 284
+        },
+        {
+          "end_line": 288,
+          "name": "BasePrefixCache.swa_protected_size",
+          "start_line": 287
+        },
+        {
+          "end_line": 291,
+          "name": "BasePrefixCache.total_size",
+          "start_line": 290
+        },
+        {
+          "end_line": 294,
+          "name": "BasePrefixCache.pretty_print",
+          "start_line": 293
+        },
+        {
+          "end_line": 303,
+          "name": "BasePrefixCache.init_load_back",
+          "start_line": 296
+        },
+        {
+          "end_line": 309,
+          "name": "BasePrefixCache.ready_to_load_host_cache",
+          "start_line": 305
+        },
+        {
+          "end_line": 317,
+          "name": "BasePrefixCache.flush_write_through_acks",
+          "start_line": 311
+        },
+        {
+          "end_line": 323,
+          "name": "BasePrefixCache.check_hicache_events",
+          "start_line": 319
+        },
+        {
+          "end_line": 326,
+          "name": "BasePrefixCache.take_events",
+          "start_line": 325
+        },
+        {
+          "end_line": 329,
+          "name": "BasePrefixCache.supports_swa",
+          "start_line": 328
+        },
+        {
+          "end_line": 335,
+          "name": "BasePrefixCache.swa_reprefill_tail_tokens",
+          "start_line": 331
+        },
+        {
+          "end_line": 338,
+          "name": "BasePrefixCache.supports_mamba",
+          "start_line": 337
+        },
+        {
+          "end_line": 341,
+          "name": "BasePrefixCache.supports_streaming_session",
+          "start_line": 340
+        },
+        {
+          "end_line": 344,
+          "name": "BasePrefixCache.release_session",
+          "start_line": 343
+        },
+        {
+          "end_line": 347,
+          "name": "BasePrefixCache.release_radix_session",
+          "start_line": 346
+        },
+        {
+          "end_line": 350,
+          "name": "BasePrefixCache.session_held_tokens",
+          "start_line": 349
+        },
+        {
+          "end_line": 353,
+          "name": "BasePrefixCache.session_held_full_tokens",
+          "start_line": 352
+        },
+        {
+          "end_line": 356,
+          "name": "BasePrefixCache.session_held_swa_tokens",
+          "start_line": 355
+        },
+        {
+          "end_line": 359,
+          "name": "BasePrefixCache.session_held_req_count",
+          "start_line": 358
+        },
+        {
+          "end_line": 362,
+          "name": "BasePrefixCache.session_held_mamba_slots",
+          "start_line": 361
+        },
+        {
+          "end_line": 365,
+          "name": "BasePrefixCache.is_chunk_cache",
+          "start_line": 364
+        },
+        {
+          "end_line": 368,
+          "name": "BasePrefixCache.is_tree_cache",
+          "start_line": 367
+        },
+        {
+          "end_line": 373,
+          "name": "BasePrefixCache.available_and_evictable_str",
+          "start_line": 370
+        }
+      ],
+      "output": "A02b-prefix-cache-contract.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/base_prefix_cache.py",
+      "source_sha256": "f4b5387be62c2aa9d6d9134ea2be258a50b2eeb7296889612fb9e7397e8efadb"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 55,
+          "name": "CacheInitParams",
+          "start_line": 17
+        }
+      ],
+      "function_count": 0,
+      "functions": [],
+      "output": "A02c-cache-init-params.md",
+      "scope": "selected",
+      "source": "python/sglang/srt/mem_cache/cache_init_params.py",
+      "source_sha256": "ceff7906df7c5166cc5fba6cea63d647cb72811bbe81c431dff798254f17bce0"
+    },
+    {
+      "class_count": 18,
+      "classes": [
+        {
+          "end_line": 307,
+          "name": "ReqToTokenPool",
+          "start_line": 240
+        },
+        {
+          "end_line": 812,
+          "name": "MambaPool",
+          "start_line": 310
+        },
+        {
+          "end_line": 345,
+          "name": "MambaPool.State",
+          "start_line": 311
+        },
+        {
+          "end_line": 350,
+          "name": "MambaPool.SpeculativeState",
+          "start_line": 347
+        },
+        {
+          "end_line": 1144,
+          "name": "HybridReqToTokenPool",
+          "start_line": 815
+        },
+        {
+          "end_line": 1180,
+          "name": "KVWriteLoc",
+          "start_line": 1147
+        },
+        {
+          "end_line": 1222,
+          "name": "KvBufferDesc",
+          "start_line": 1190
+        },
+        {
+          "end_line": 1325,
+          "name": "KVCache",
+          "start_line": 1225
+        },
+        {
+          "end_line": 2021,
+          "name": "MHATokenToKVPool",
+          "start_line": 1328
+        },
+        {
+          "end_line": 2135,
+          "name": "NoOpMHATokenToKVPool",
+          "start_line": 2024
+        },
+        {
+          "end_line": 2285,
+          "name": "MHATokenToKVPoolFP4",
+          "start_line": 2138
+        },
+        {
+          "end_line": 2439,
+          "name": "PageMajorMHATokenToKVPool",
+          "start_line": 2288
+        },
+        {
+          "end_line": 2706,
+          "name": "HybridLinearKVPool",
+          "start_line": 2442
+        },
+        {
+          "end_line": 2976,
+          "name": "MLATokenToKVPool",
+          "start_line": 2709
+        },
+        {
+          "end_line": 3116,
+          "name": "MLATokenToKVPoolFP4",
+          "start_line": 2979
+        },
+        {
+          "end_line": 3362,
+          "name": "DSATokenToKVPool",
+          "start_line": 3119
+        },
+        {
+          "end_line": 3532,
+          "name": "MHATokenToKOnlyPool",
+          "start_line": 3448
+        },
+        {
+          "end_line": 3868,
+          "name": "MiniMaxSparseKVPool",
+          "start_line": 3535
+        }
+      ],
+      "function_count": 192,
+      "functions": [
+        {
+          "end_line": 121,
+          "name": "conv_window_dedup_enabled",
+          "start_line": 104
+        },
+        {
+          "end_line": 127,
+          "name": "get_tensor_size_bytes",
+          "start_line": 124
+        },
+        {
+          "end_line": 176,
+          "name": "_set_kv_buffer_impl",
+          "start_line": 130
+        },
+        {
+          "end_line": 237,
+          "name": "_set_kv_buffer_prefix_valid_impl",
+          "start_line": 179
+        },
+        {
+          "end_line": 266,
+          "name": "ReqToTokenPool.__init__",
+          "start_line": 245
+        },
+        {
+          "end_line": 269,
+          "name": "ReqToTokenPool.write",
+          "start_line": 268
+        },
+        {
+          "end_line": 272,
+          "name": "ReqToTokenPool.available_size",
+          "start_line": 271
+        },
+        {
+          "end_line": 299,
+          "name": "ReqToTokenPool.alloc",
+          "start_line": 274
+        },
+        {
+          "end_line": 304,
+          "name": "ReqToTokenPool.free",
+          "start_line": 301
+        },
+        {
+          "end_line": 307,
+          "name": "ReqToTokenPool.clear",
+          "start_line": 306
+        },
+        {
+          "end_line": 338,
+          "name": "MambaPool.State.at_layer_idx",
+          "start_line": 325
+        },
+        {
+          "end_line": 345,
+          "name": "MambaPool.State.mem_usage_bytes",
+          "start_line": 340
+        },
+        {
+          "end_line": 658,
+          "name": "MambaPool.__init__",
+          "start_line": 352
+        },
+        {
+          "end_line": 662,
+          "name": "MambaPool.get_speculative_mamba2_params_all_layers",
+          "start_line": 660
+        },
+        {
+          "end_line": 665,
+          "name": "MambaPool.mamba2_layer_cache",
+          "start_line": 664
+        },
+        {
+          "end_line": 687,
+          "name": "MambaPool.clear_slots",
+          "start_line": 667
+        },
+        {
+          "end_line": 716,
+          "name": "MambaPool.copy_from",
+          "start_line": 689
+        },
+        {
+          "end_line": 728,
+          "name": "MambaPool.get_cpu_copy",
+          "start_line": 718
+        },
+        {
+          "end_line": 738,
+          "name": "MambaPool.load_cpu_copy",
+          "start_line": 730
+        },
+        {
+          "end_line": 773,
+          "name": "MambaPool.get_contiguous_buf_infos",
+          "start_line": 740
+        },
+        {
+          "end_line": 812,
+          "name": "MambaPool.get_state_dim_per_tensor",
+          "start_line": 775
+        },
+        {
+          "end_line": 864,
+          "name": "HybridReqToTokenPool.__init__",
+          "start_line": 818
+        },
+        {
+          "end_line": 925,
+          "name": "HybridReqToTokenPool._init_mamba_pool",
+          "start_line": 866
+        },
+        {
+          "end_line": 928,
+          "name": "HybridReqToTokenPool.register_layer_transfer_counter",
+          "start_line": 927
+        },
+        {
+          "end_line": 974,
+          "name": "HybridReqToTokenPool.alloc",
+          "start_line": 932
+        },
+        {
+          "end_line": 977,
+          "name": "HybridReqToTokenPool.get_mamba_indices",
+          "start_line": 976
+        },
+        {
+          "end_line": 985,
+          "name": "HybridReqToTokenPool.translate_mamba_indices",
+          "start_line": 979
+        },
+        {
+          "end_line": 991,
+          "name": "HybridReqToTokenPool.mamba2_layer_cache",
+          "start_line": 987
+        },
+        {
+          "end_line": 994,
+          "name": "HybridReqToTokenPool.get_speculative_mamba2_params_all_layers",
+          "start_line": 993
+        },
+        {
+          "end_line": 997,
+          "name": "HybridReqToTokenPool.get_state_buf_infos",
+          "start_line": 996
+        },
+        {
+          "end_line": 1000,
+          "name": "HybridReqToTokenPool.get_state_dim_per_tensor",
+          "start_line": 999
+        },
+        {
+          "end_line": 1006,
+          "name": "HybridReqToTokenPool.get_mamba_ping_pong_other_idx",
+          "start_line": 1002
+        },
+        {
+          "end_line": 1016,
+          "name": "HybridReqToTokenPool.get_mamba_ping_pong_keep_idx",
+          "start_line": 1008
+        },
+        {
+          "end_line": 1042,
+          "name": "HybridReqToTokenPool._alloc_ping_pong_buffer",
+          "start_line": 1018
+        },
+        {
+          "end_line": 1054,
+          "name": "HybridReqToTokenPool.set_mamba_ping_pong_slot",
+          "start_line": 1044
+        },
+        {
+          "end_line": 1077,
+          "name": "HybridReqToTokenPool.donate_mamba_ping_pong_slot",
+          "start_line": 1056
+        },
+        {
+          "end_line": 1130,
+          "name": "HybridReqToTokenPool.free_mamba_cache",
+          "start_line": 1079
+        },
+        {
+          "end_line": 1144,
+          "name": "HybridReqToTokenPool.clear",
+          "start_line": 1132
+        },
+        {
+          "end_line": 1180,
+          "name": "KVWriteLoc.__post_init__",
+          "start_line": 1173
+        },
+        {
+          "end_line": 1187,
+          "name": "unwrap_write_loc",
+          "start_line": 1183
+        },
+        {
+          "end_line": 1200,
+          "name": "KvBufferDesc.__init__",
+          "start_line": 1196
+        },
+        {
+          "end_line": 1204,
+          "name": "KvBufferDesc._rows",
+          "start_line": 1202
+        },
+        {
+          "end_line": 1208,
+          "name": "KvBufferDesc.reserved_span_bytes",
+          "start_line": 1206
+        },
+        {
+          "end_line": 1212,
+          "name": "KvBufferDesc.prefix_span_bytes",
+          "start_line": 1210
+        },
+        {
+          "end_line": 1218,
+          "name": "KvBufferDesc.final_span_bytes",
+          "start_line": 1214
+        },
+        {
+          "end_line": 1222,
+          "name": "KvBufferDesc.item_len_bytes",
+          "start_line": 1220
+        },
+        {
+          "end_line": 1267,
+          "name": "KVCache.__init__",
+          "start_line": 1229
+        },
+        {
+          "end_line": 1287,
+          "name": "KVCache._finalize_allocation_log",
+          "start_line": 1269
+        },
+        {
+          "end_line": 1291,
+          "name": "KVCache.get_kv_buffer_shape",
+          "start_line": 1289
+        },
+        {
+          "end_line": 1295,
+          "name": "KVCache.get_key_buffer",
+          "start_line": 1293
+        },
+        {
+          "end_line": 1299,
+          "name": "KVCache.get_value_buffer",
+          "start_line": 1297
+        },
+        {
+          "end_line": 1303,
+          "name": "KVCache.get_kv_buffer",
+          "start_line": 1301
+        },
+        {
+          "end_line": 1313,
+          "name": "KVCache.set_kv_buffer",
+          "start_line": 1305
+        },
+        {
+          "end_line": 1316,
+          "name": "KVCache.register_layer_transfer_counter",
+          "start_line": 1315
+        },
+        {
+          "end_line": 1319,
+          "name": "KVCache.get_cpu_copy",
+          "start_line": 1318
+        },
+        {
+          "end_line": 1322,
+          "name": "KVCache.load_cpu_copy",
+          "start_line": 1321
+        },
+        {
+          "end_line": 1325,
+          "name": "KVCache.maybe_get_custom_mem_pool",
+          "start_line": 1324
+        },
+        {
+          "end_line": 1441,
+          "name": "MHATokenToKVPool.__init__",
+          "start_line": 1329
+        },
+        {
+          "end_line": 1489,
+          "name": "MHATokenToKVPool._init_kv_copy_and_warmup",
+          "start_line": 1443
+        },
+        {
+          "end_line": 1514,
+          "name": "MHATokenToKVPool._create_buffers",
+          "start_line": 1491
+        },
+        {
+          "end_line": 1527,
+          "name": "MHATokenToKVPool._kv_buffer_shapes",
+          "start_line": 1516
+        },
+        {
+          "end_line": 1580,
+          "name": "MHATokenToKVPool._create_buffers_normal",
+          "start_line": 1529
+        },
+        {
+          "end_line": 1615,
+          "name": "MHATokenToKVPool._build_kv_buffer_descs",
+          "start_line": 1584
+        },
+        {
+          "end_line": 1620,
+          "name": "MHATokenToKVPool._assign_post_capture_tensors",
+          "start_line": 1617
+        },
+        {
+          "end_line": 1633,
+          "name": "MHATokenToKVPool._alloc_post_capture_buffers",
+          "start_line": 1622
+        },
+        {
+          "end_line": 1639,
+          "name": "MHATokenToKVPool.finalize_backing",
+          "start_line": 1635
+        },
+        {
+          "end_line": 1644,
+          "name": "MHATokenToKVPool._finalize_backing_tokens",
+          "start_line": 1641
+        },
+        {
+          "end_line": 1648,
+          "name": "MHATokenToKVPool.post_capture_backed_bytes",
+          "start_line": 1646
+        },
+        {
+          "end_line": 1655,
+          "name": "MHATokenToKVPool._clear_buffers",
+          "start_line": 1650
+        },
+        {
+          "end_line": 1666,
+          "name": "MHATokenToKVPool.get_kv_size_bytes",
+          "start_line": 1657
+        },
+        {
+          "end_line": 1672,
+          "name": "MHATokenToKVPool._pd_registerable_tensors",
+          "start_line": 1669
+        },
+        {
+          "end_line": 1688,
+          "name": "MHATokenToKVPool.get_contiguous_buf_infos",
+          "start_line": 1674
+        },
+        {
+          "end_line": 1710,
+          "name": "MHATokenToKVPool.get_cpu_copy",
+          "start_line": 1690
+        },
+        {
+          "end_line": 1731,
+          "name": "MHATokenToKVPool.load_cpu_copy",
+          "start_line": 1712
+        },
+        {
+          "end_line": 1737,
+          "name": "MHATokenToKVPool._get_key_buffer",
+          "start_line": 1733
+        },
+        {
+          "end_line": 1745,
+          "name": "MHATokenToKVPool.get_key_buffer",
+          "start_line": 1739
+        },
+        {
+          "end_line": 1751,
+          "name": "MHATokenToKVPool._get_value_buffer",
+          "start_line": 1747
+        },
+        {
+          "end_line": 1756,
+          "name": "MHATokenToKVPool.get_value_buffer",
+          "start_line": 1753
+        },
+        {
+          "end_line": 1759,
+          "name": "MHATokenToKVPool.get_kv_buffer",
+          "start_line": 1758
+        },
+        {
+          "end_line": 1822,
+          "name": "MHATokenToKVPool.set_kv_buffer",
+          "start_line": 1761
+        },
+        {
+          "end_line": 1871,
+          "name": "MHATokenToKVPool._store_kv_layer",
+          "start_line": 1824
+        },
+        {
+          "end_line": 1956,
+          "name": "MHATokenToKVPool.set_kv_buffer_prefix_valid",
+          "start_line": 1873
+        },
+        {
+          "end_line": 1976,
+          "name": "MHATokenToKVPool.move_kv_cache",
+          "start_line": 1958
+        },
+        {
+          "end_line": 2021,
+          "name": "MHATokenToKVPool._move_kv_cache_impl",
+          "start_line": 1978
+        },
+        {
+          "end_line": 2090,
+          "name": "NoOpMHATokenToKVPool._create_buffers",
+          "start_line": 2042
+        },
+        {
+          "end_line": 2105,
+          "name": "NoOpMHATokenToKVPool._finalize_allocation_log",
+          "start_line": 2092
+        },
+        {
+          "end_line": 2109,
+          "name": "NoOpMHATokenToKVPool.get_kv_size_bytes",
+          "start_line": 2107
+        },
+        {
+          "end_line": 2119,
+          "name": "NoOpMHATokenToKVPool.set_kv_buffer",
+          "start_line": 2111
+        },
+        {
+          "end_line": 2125,
+          "name": "NoOpMHATokenToKVPool.get_key_buffer",
+          "start_line": 2121
+        },
+        {
+          "end_line": 2128,
+          "name": "NoOpMHATokenToKVPool.get_value_buffer",
+          "start_line": 2127
+        },
+        {
+          "end_line": 2131,
+          "name": "NoOpMHATokenToKVPool.get_kv_buffer",
+          "start_line": 2130
+        },
+        {
+          "end_line": 2135,
+          "name": "NoOpMHATokenToKVPool.move_kv_cache",
+          "start_line": 2133
+        },
+        {
+          "end_line": 2186,
+          "name": "MHATokenToKVPoolFP4._create_buffers",
+          "start_line": 2139
+        },
+        {
+          "end_line": 2192,
+          "name": "MHATokenToKVPoolFP4._clear_buffers",
+          "start_line": 2188
+        },
+        {
+          "end_line": 2210,
+          "name": "MHATokenToKVPoolFP4._get_key_buffer",
+          "start_line": 2194
+        },
+        {
+          "end_line": 2228,
+          "name": "MHATokenToKVPoolFP4._get_value_buffer",
+          "start_line": 2212
+        },
+        {
+          "end_line": 2285,
+          "name": "MHATokenToKVPoolFP4.set_kv_buffer",
+          "start_line": 2230
+        },
+        {
+          "end_line": 2323,
+          "name": "PageMajorMHATokenToKVPool.__init__",
+          "start_line": 2303
+        },
+        {
+          "end_line": 2379,
+          "name": "PageMajorMHATokenToKVPool._create_buffers",
+          "start_line": 2325
+        },
+        {
+          "end_line": 2397,
+          "name": "PageMajorMHATokenToKVPool._store_kv_layer",
+          "start_line": 2381
+        },
+        {
+          "end_line": 2409,
+          "name": "PageMajorMHATokenToKVPool._move_kv_cache_impl",
+          "start_line": 2399
+        },
+        {
+          "end_line": 2421,
+          "name": "PageMajorMHATokenToKVPool.get_contiguous_buf_infos",
+          "start_line": 2416
+        },
+        {
+          "end_line": 2427,
+          "name": "PageMajorMHATokenToKVPool.get_cpu_copy",
+          "start_line": 2423
+        },
+        {
+          "end_line": 2433,
+          "name": "PageMajorMHATokenToKVPool.load_cpu_copy",
+          "start_line": 2429
+        },
+        {
+          "end_line": 2439,
+          "name": "PageMajorMHATokenToKVPool.set_kv_buffer_prefix_valid",
+          "start_line": 2435
+        },
+        {
+          "end_line": 2547,
+          "name": "HybridLinearKVPool.__init__",
+          "start_line": 2445
+        },
+        {
+          "end_line": 2551,
+          "name": "HybridLinearKVPool.post_capture_active",
+          "start_line": 2549
+        },
+        {
+          "end_line": 2555,
+          "name": "HybridLinearKVPool.post_capture_backed_bytes",
+          "start_line": 2553
+        },
+        {
+          "end_line": 2560,
+          "name": "HybridLinearKVPool.finalize_backing",
+          "start_line": 2557
+        },
+        {
+          "end_line": 2563,
+          "name": "HybridLinearKVPool.get_kv_size_bytes",
+          "start_line": 2562
+        },
+        {
+          "end_line": 2566,
+          "name": "HybridLinearKVPool.get_contiguous_buf_infos",
+          "start_line": 2565
+        },
+        {
+          "end_line": 2572,
+          "name": "HybridLinearKVPool.get_state_buf_infos",
+          "start_line": 2568
+        },
+        {
+          "end_line": 2576,
+          "name": "HybridLinearKVPool.get_state_dim_per_tensor",
+          "start_line": 2574
+        },
+        {
+          "end_line": 2579,
+          "name": "HybridLinearKVPool.maybe_get_custom_mem_pool",
+          "start_line": 2578
+        },
+        {
+          "end_line": 2586,
+          "name": "HybridLinearKVPool._transfer_full_attention_id",
+          "start_line": 2581
+        },
+        {
+          "end_line": 2592,
+          "name": "HybridLinearKVPool.register_layer_transfer_counter",
+          "start_line": 2588
+        },
+        {
+          "end_line": 2596,
+          "name": "HybridLinearKVPool._wait_for_layer",
+          "start_line": 2594
+        },
+        {
+          "end_line": 2601,
+          "name": "HybridLinearKVPool.get_key_buffer",
+          "start_line": 2598
+        },
+        {
+          "end_line": 2606,
+          "name": "HybridLinearKVPool.get_value_buffer",
+          "start_line": 2603
+        },
+        {
+          "end_line": 2611,
+          "name": "HybridLinearKVPool.get_kv_buffer",
+          "start_line": 2608
+        },
+        {
+          "end_line": 2625,
+          "name": "HybridLinearKVPool._transfer_id_context",
+          "start_line": 2613
+        },
+        {
+          "end_line": 2622,
+          "name": "HybridLinearKVPool._transfer_id_context.<local>._patch_layer_id",
+          "start_line": 2615
+        },
+        {
+          "end_line": 2661,
+          "name": "HybridLinearKVPool.set_kv_buffer",
+          "start_line": 2627
+        },
+        {
+          "end_line": 2664,
+          "name": "HybridLinearKVPool.move_kv_cache",
+          "start_line": 2663
+        },
+        {
+          "end_line": 2674,
+          "name": "HybridLinearKVPool.get_cpu_copy",
+          "start_line": 2666
+        },
+        {
+          "end_line": 2682,
+          "name": "HybridLinearKVPool.load_cpu_copy",
+          "start_line": 2676
+        },
+        {
+          "end_line": 2685,
+          "name": "HybridLinearKVPool.get_v_head_dim",
+          "start_line": 2684
+        },
+        {
+          "end_line": 2696,
+          "name": "HybridLinearKVPool.set_mla_kv_buffer",
+          "start_line": 2687
+        },
+        {
+          "end_line": 2706,
+          "name": "HybridLinearKVPool.get_mla_kv_buffer",
+          "start_line": 2698
+        },
+        {
+          "end_line": 2761,
+          "name": "MLATokenToKVPool.__init__",
+          "start_line": 2710
+        },
+        {
+          "end_line": 2778,
+          "name": "MLATokenToKVPool._create_buffers",
+          "start_line": 2763
+        },
+        {
+          "end_line": 2781,
+          "name": "MLATokenToKVPool._clear_buffers",
+          "start_line": 2780
+        },
+        {
+          "end_line": 2788,
+          "name": "MLATokenToKVPool.get_kv_size_bytes",
+          "start_line": 2783
+        },
+        {
+          "end_line": 2798,
+          "name": "MLATokenToKVPool.get_contiguous_buf_infos",
+          "start_line": 2791
+        },
+        {
+          "end_line": 2807,
+          "name": "MLATokenToKVPool.get_key_buffer",
+          "start_line": 2800
+        },
+        {
+          "end_line": 2817,
+          "name": "MLATokenToKVPool.get_value_buffer",
+          "start_line": 2809
+        },
+        {
+          "end_line": 2820,
+          "name": "MLATokenToKVPool.get_kv_buffer",
+          "start_line": 2819
+        },
+        {
+          "end_line": 2847,
+          "name": "MLATokenToKVPool.set_kv_buffer",
+          "start_line": 2822
+        },
+        {
+          "end_line": 2896,
+          "name": "MLATokenToKVPool._write_mla_kv_buffer",
+          "start_line": 2849
+        },
+        {
+          "end_line": 2912,
+          "name": "MLATokenToKVPool.set_mla_kv_buffer",
+          "start_line": 2898
+        },
+        {
+          "end_line": 2935,
+          "name": "MLATokenToKVPool.get_mla_kv_buffer",
+          "start_line": 2914
+        },
+        {
+          "end_line": 2949,
+          "name": "MLATokenToKVPool.move_kv_cache",
+          "start_line": 2937
+        },
+        {
+          "end_line": 2964,
+          "name": "MLATokenToKVPool.get_cpu_copy",
+          "start_line": 2951
+        },
+        {
+          "end_line": 2976,
+          "name": "MLATokenToKVPool.load_cpu_copy",
+          "start_line": 2966
+        },
+        {
+          "end_line": 3011,
+          "name": "MLATokenToKVPoolFP4._create_buffers",
+          "start_line": 2980
+        },
+        {
+          "end_line": 3015,
+          "name": "MLATokenToKVPoolFP4._clear_buffers",
+          "start_line": 3013
+        },
+        {
+          "end_line": 3036,
+          "name": "MLATokenToKVPoolFP4.get_key_buffer",
+          "start_line": 3017
+        },
+        {
+          "end_line": 3067,
+          "name": "MLATokenToKVPoolFP4.set_kv_buffer",
+          "start_line": 3038
+        },
+        {
+          "end_line": 3116,
+          "name": "MLATokenToKVPoolFP4.set_mla_kv_buffer",
+          "start_line": 3069
+        },
+        {
+          "end_line": 3179,
+          "name": "DSATokenToKVPool.__init__",
+          "start_line": 3124
+        },
+        {
+          "end_line": 3186,
+          "name": "DSATokenToKVPool._index_buffer_shape",
+          "start_line": 3181
+        },
+        {
+          "end_line": 3208,
+          "name": "DSATokenToKVPool._create_index_buffers",
+          "start_line": 3188
+        },
+        {
+          "end_line": 3212,
+          "name": "DSATokenToKVPool._clear_buffers",
+          "start_line": 3210
+        },
+        {
+          "end_line": 3224,
+          "name": "DSATokenToKVPool.move_kv_cache",
+          "start_line": 3214
+        },
+        {
+          "end_line": 3229,
+          "name": "DSATokenToKVPool.get_index_k_with_scale_buffer",
+          "start_line": 3226
+        },
+        {
+          "end_line": 3242,
+          "name": "DSATokenToKVPool.get_index_k_continuous",
+          "start_line": 3231
+        },
+        {
+          "end_line": 3255,
+          "name": "DSATokenToKVPool.get_index_k_scale_continuous",
+          "start_line": 3244
+        },
+        {
+          "end_line": 3286,
+          "name": "DSATokenToKVPool.get_index_k_scale_buffer",
+          "start_line": 3257
+        },
+        {
+          "end_line": 3298,
+          "name": "DSATokenToKVPool.set_index_k_scale_buffer",
+          "start_line": 3288
+        },
+        {
+          "end_line": 3323,
+          "name": "DSATokenToKVPool.get_cpu_copy",
+          "start_line": 3300
+        },
+        {
+          "end_line": 3344,
+          "name": "DSATokenToKVPool.load_cpu_copy",
+          "start_line": 3325
+        },
+        {
+          "end_line": 3356,
+          "name": "DSATokenToKVPool.get_state_buf_infos",
+          "start_line": 3346
+        },
+        {
+          "end_line": 3362,
+          "name": "DSATokenToKVPool.get_kv_size_bytes",
+          "start_line": 3358
+        },
+        {
+          "end_line": 3402,
+          "name": "move_kv_cache_native",
+          "start_line": 3365
+        },
+        {
+          "end_line": 3445,
+          "name": "masked_set_kv_buffer_kernel",
+          "start_line": 3405
+        },
+        {
+          "end_line": 3491,
+          "name": "MHATokenToKOnlyPool.__init__",
+          "start_line": 3452
+        },
+        {
+          "end_line": 3496,
+          "name": "MHATokenToKOnlyPool._get_key_buffer",
+          "start_line": 3493
+        },
+        {
+          "end_line": 3501,
+          "name": "MHATokenToKOnlyPool.register_layer_transfer_counter",
+          "start_line": 3498
+        },
+        {
+          "end_line": 3506,
+          "name": "MHATokenToKOnlyPool.get_key_buffer",
+          "start_line": 3503
+        },
+        {
+          "end_line": 3509,
+          "name": "MHATokenToKOnlyPool.get_value_buffer",
+          "start_line": 3508
+        },
+        {
+          "end_line": 3512,
+          "name": "MHATokenToKOnlyPool.get_kv_buffer",
+          "start_line": 3511
+        },
+        {
+          "end_line": 3528,
+          "name": "MHATokenToKOnlyPool.set_kv_buffer",
+          "start_line": 3514
+        },
+        {
+          "end_line": 3532,
+          "name": "MHATokenToKOnlyPool.get_kv_size_bytes",
+          "start_line": 3530
+        },
+        {
+          "end_line": 3649,
+          "name": "MiniMaxSparseKVPool.__init__",
+          "start_line": 3536
+        },
+        {
+          "end_line": 3654,
+          "name": "MiniMaxSparseKVPool.register_layer_transfer_counter",
+          "start_line": 3651
+        },
+        {
+          "end_line": 3658,
+          "name": "MiniMaxSparseKVPool._wait_for_layer",
+          "start_line": 3656
+        },
+        {
+          "end_line": 3662,
+          "name": "MiniMaxSparseKVPool.get_key_buffer",
+          "start_line": 3660
+        },
+        {
+          "end_line": 3666,
+          "name": "MiniMaxSparseKVPool.get_value_buffer",
+          "start_line": 3664
+        },
+        {
+          "end_line": 3670,
+          "name": "MiniMaxSparseKVPool.get_kv_buffer",
+          "start_line": 3668
+        },
+        {
+          "end_line": 3681,
+          "name": "MiniMaxSparseKVPool.get_index_kv_buffer",
+          "start_line": 3672
+        },
+        {
+          "end_line": 3696,
+          "name": "MiniMaxSparseKVPool.get_index_k_buffer",
+          "start_line": 3683
+        },
+        {
+          "end_line": 3715,
+          "name": "MiniMaxSparseKVPool.set_kv_buffer",
+          "start_line": 3698
+        },
+        {
+          "end_line": 3741,
+          "name": "MiniMaxSparseKVPool.set_index_kv_buffer",
+          "start_line": 3717
+        },
+        {
+          "end_line": 3761,
+          "name": "MiniMaxSparseKVPool.set_index_k_buffer",
+          "start_line": 3743
+        },
+        {
+          "end_line": 3786,
+          "name": "MiniMaxSparseKVPool._can_fuse_kv_index_store",
+          "start_line": 3763
+        },
+        {
+          "end_line": 3835,
+          "name": "MiniMaxSparseKVPool.set_fused_kv_index_buffer",
+          "start_line": 3788
+        },
+        {
+          "end_line": 3840,
+          "name": "MiniMaxSparseKVPool.get_kv_size_bytes",
+          "start_line": 3837
+        },
+        {
+          "end_line": 3844,
+          "name": "MiniMaxSparseKVPool.get_contiguous_buf_infos",
+          "start_line": 3842
+        },
+        {
+          "end_line": 3854,
+          "name": "MiniMaxSparseKVPool.get_index_k_state_buf_infos",
+          "start_line": 3846
+        },
+        {
+          "end_line": 3857,
+          "name": "MiniMaxSparseKVPool.maybe_get_custom_mem_pool",
+          "start_line": 3856
+        },
+        {
+          "end_line": 3865,
+          "name": "MiniMaxSparseKVPool.move_kv_cache",
+          "start_line": 3859
+        },
+        {
+          "end_line": 3868,
+          "name": "MiniMaxSparseKVPool.get_v_head_dim",
+          "start_line": 3867
+        }
+      ],
+      "output": "A02d-l1-memory-pools.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/memory_pool.py",
+      "source_sha256": "66a22eac27a562dae12c0367bb64f11b8f57b8b40b112d53ccef053f8361830a"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 116,
+          "name": "BaseTokenToKVPoolAllocator",
+          "start_line": 27
+        }
+      ],
+      "function_count": 18,
+      "functions": [
+        {
+          "end_line": 48,
+          "name": "BaseTokenToKVPoolAllocator.__init__",
+          "start_line": 28
+        },
+        {
+          "end_line": 52,
+          "name": "BaseTokenToKVPoolAllocator.size_full",
+          "start_line": 50
+        },
+        {
+          "end_line": 55,
+          "name": "BaseTokenToKVPoolAllocator.debug_print",
+          "start_line": 54
+        },
+        {
+          "end_line": 58,
+          "name": "BaseTokenToKVPoolAllocator.available_size",
+          "start_line": 57
+        },
+        {
+          "end_line": 61,
+          "name": "BaseTokenToKVPoolAllocator.get_kvcache",
+          "start_line": 60
+        },
+        {
+          "end_line": 64,
+          "name": "BaseTokenToKVPoolAllocator.restore_state",
+          "start_line": 63
+        },
+        {
+          "end_line": 67,
+          "name": "BaseTokenToKVPoolAllocator.backup_state",
+          "start_line": 66
+        },
+        {
+          "end_line": 71,
+          "name": "BaseTokenToKVPoolAllocator.free_group_begin",
+          "start_line": 69
+        },
+        {
+          "end_line": 76,
+          "name": "BaseTokenToKVPoolAllocator.free_group_end",
+          "start_line": 73
+        },
+        {
+          "end_line": 84,
+          "name": "BaseTokenToKVPoolAllocator.merge_and_sort_free",
+          "start_line": 78
+        },
+        {
+          "end_line": 88,
+          "name": "BaseTokenToKVPoolAllocator.get_cpu_copy",
+          "start_line": 86
+        },
+        {
+          "end_line": 92,
+          "name": "BaseTokenToKVPoolAllocator.load_cpu_copy",
+          "start_line": 90
+        },
+        {
+          "end_line": 95,
+          "name": "BaseTokenToKVPoolAllocator.alloc_extend",
+          "start_line": 94
+        },
+        {
+          "end_line": 98,
+          "name": "BaseTokenToKVPoolAllocator.alloc_decode",
+          "start_line": 97
+        },
+        {
+          "end_line": 104,
+          "name": "BaseTokenToKVPoolAllocator.resize",
+          "start_line": 100
+        },
+        {
+          "end_line": 108,
+          "name": "BaseTokenToKVPoolAllocator.clear",
+          "start_line": 106
+        },
+        {
+          "end_line": 112,
+          "name": "BaseTokenToKVPoolAllocator.alloc",
+          "start_line": 110
+        },
+        {
+          "end_line": 116,
+          "name": "BaseTokenToKVPoolAllocator.free",
+          "start_line": 114
+        }
+      ],
+      "output": "A02e-device-allocator-base.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/allocator/base.py",
+      "source_sha256": "ccb5682d551c1fd10fdc1cd373d6d3ab195e80441230edfe3713d32e7c5f045d"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 84,
+          "name": "TokenToKVPoolAllocator",
+          "start_line": 28
+        }
+      ],
+      "function_count": 7,
+      "functions": [
+        {
+          "end_line": 40,
+          "name": "TokenToKVPoolAllocator.__init__",
+          "start_line": 31
+        },
+        {
+          "end_line": 49,
+          "name": "TokenToKVPoolAllocator.clear",
+          "start_line": 42
+        },
+        {
+          "end_line": 53,
+          "name": "TokenToKVPoolAllocator.available_size",
+          "start_line": 51
+        },
+        {
+          "end_line": 64,
+          "name": "TokenToKVPoolAllocator.alloc",
+          "start_line": 55
+        },
+        {
+          "end_line": 76,
+          "name": "TokenToKVPoolAllocator.free",
+          "start_line": 66
+        },
+        {
+          "end_line": 79,
+          "name": "TokenToKVPoolAllocator.get_cpu_copy",
+          "start_line": 78
+        },
+        {
+          "end_line": 84,
+          "name": "TokenToKVPoolAllocator.load_cpu_copy",
+          "start_line": 81
+        }
+      ],
+      "output": "A02f-token-allocator.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/allocator/token.py",
+      "source_sha256": "8e9c936a0e51307eae876dcf175ed91f6e505a77b2c8a3a2e3f390d0440916a9"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 292,
+          "name": "PagedTokenToKVPoolAllocator",
+          "start_line": 105
+        }
+      ],
+      "function_count": 9,
+      "functions": [
+        {
+          "end_line": 102,
+          "name": "alloc_extend_naive",
+          "start_line": 45
+        },
+        {
+          "end_line": 147,
+          "name": "PagedTokenToKVPoolAllocator.__init__",
+          "start_line": 115
+        },
+        {
+          "end_line": 170,
+          "name": "PagedTokenToKVPoolAllocator.alloc",
+          "start_line": 149
+        },
+        {
+          "end_line": 220,
+          "name": "PagedTokenToKVPoolAllocator.alloc_extend",
+          "start_line": 172
+        },
+        {
+          "end_line": 259,
+          "name": "PagedTokenToKVPoolAllocator.alloc_decode",
+          "start_line": 222
+        },
+        {
+          "end_line": 275,
+          "name": "PagedTokenToKVPoolAllocator.free",
+          "start_line": 261
+        },
+        {
+          "end_line": 284,
+          "name": "PagedTokenToKVPoolAllocator.clear",
+          "start_line": 277
+        },
+        {
+          "end_line": 287,
+          "name": "PagedTokenToKVPoolAllocator.get_cpu_copy",
+          "start_line": 286
+        },
+        {
+          "end_line": 292,
+          "name": "PagedTokenToKVPoolAllocator.load_cpu_copy",
+          "start_line": 289
+        }
+      ],
+      "output": "A02g-paged-allocator.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/allocator/paged.py",
+      "source_sha256": "b3872ab30f49eae63e70cd57d27783d3b733954496ccbb179c7d9de184e486c5"
+    },
+    {
+      "class_count": 0,
+      "classes": [],
+      "function_count": 22,
+      "functions": [
+        {
+          "end_line": 56,
+          "name": "kv_to_page_indices",
+          "start_line": 51
+        },
+        {
+          "end_line": 60,
+          "name": "kv_to_page_num",
+          "start_line": 59
+        },
+        {
+          "end_line": 64,
+          "name": "page_align_floor",
+          "start_line": 63
+        },
+        {
+          "end_line": 112,
+          "name": "free_swa_out_of_window_slots",
+          "start_line": 67
+        },
+        {
+          "end_line": 119,
+          "name": "maybe_cache_unfinished_req",
+          "start_line": 115
+        },
+        {
+          "end_line": 168,
+          "name": "write_cache_indices",
+          "start_line": 122
+        },
+        {
+          "end_line": 198,
+          "name": "get_last_loc",
+          "start_line": 171
+        },
+        {
+          "end_line": 210,
+          "name": "get_last_loc_torch",
+          "start_line": 201
+        },
+        {
+          "end_line": 238,
+          "name": "get_alloc_len_per_decode",
+          "start_line": 213
+        },
+        {
+          "end_line": 247,
+          "name": "get_alloc_reserve_per_decode",
+          "start_line": 241
+        },
+        {
+          "end_line": 264,
+          "name": "get_req_to_token_extra_context_len",
+          "start_line": 250
+        },
+        {
+          "end_line": 292,
+          "name": "alloc_token_slots",
+          "start_line": 267
+        },
+        {
+          "end_line": 318,
+          "name": "evict_from_tree_cache",
+          "start_line": 295
+        },
+        {
+          "end_line": 332,
+          "name": "_compute_dsv4_state_lens",
+          "start_line": 321
+        },
+        {
+          "end_line": 396,
+          "name": "alloc_paged_token_slots_extend",
+          "start_line": 335
+        },
+        {
+          "end_line": 438,
+          "name": "alloc_req_slots",
+          "start_line": 399
+        },
+        {
+          "end_line": 447,
+          "name": "_alloc_page_size",
+          "start_line": 441
+        },
+        {
+          "end_line": 524,
+          "name": "alloc_for_extend",
+          "start_line": 450
+        },
+        {
+          "end_line": 576,
+          "name": "alloc_paged_token_slots_decode",
+          "start_line": 527
+        },
+        {
+          "end_line": 630,
+          "name": "alloc_for_decode",
+          "start_line": 579
+        },
+        {
+          "end_line": 687,
+          "name": "release_kv_cache",
+          "start_line": 633
+        },
+        {
+          "end_line": 691,
+          "name": "available_and_evictable_str",
+          "start_line": 690
+        }
+      ],
+      "output": "A02h-request-allocation-flow.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/common.py",
+      "source_sha256": "54efcd5161928719bf1fa7ecf8a30a51a2ab5c5cd07e21e806822eb9fbf29ffa"
+    },
+    {
+      "class_count": 2,
+      "classes": [
+        {
+          "end_line": 273,
+          "name": "HiSparseTokenToKVPoolAllocator",
+          "start_line": 15
+        },
+        {
+          "end_line": 588,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator",
+          "start_line": 276
+        }
+      ],
+      "function_count": 43,
+      "functions": [
+        {
+          "end_line": 69,
+          "name": "HiSparseTokenToKVPoolAllocator.__init__",
+          "start_line": 16
+        },
+        {
+          "end_line": 73,
+          "name": "HiSparseTokenToKVPoolAllocator.size_full",
+          "start_line": 71
+        },
+        {
+          "end_line": 77,
+          "name": "HiSparseTokenToKVPoolAllocator.size",
+          "start_line": 75
+        },
+        {
+          "end_line": 83,
+          "name": "HiSparseTokenToKVPoolAllocator.available_size",
+          "start_line": 79
+        },
+        {
+          "end_line": 86,
+          "name": "HiSparseTokenToKVPoolAllocator.get_kvcache",
+          "start_line": 85
+        },
+        {
+          "end_line": 105,
+          "name": "HiSparseTokenToKVPoolAllocator.alloc",
+          "start_line": 88
+        },
+        {
+          "end_line": 128,
+          "name": "HiSparseTokenToKVPoolAllocator.alloc_logical_only",
+          "start_line": 107
+        },
+        {
+          "end_line": 166,
+          "name": "HiSparseTokenToKVPoolAllocator.alloc_device_buffer",
+          "start_line": 130
+        },
+        {
+          "end_line": 171,
+          "name": "HiSparseTokenToKVPoolAllocator.free_hisparse_indices",
+          "start_line": 168
+        },
+        {
+          "end_line": 174,
+          "name": "HiSparseTokenToKVPoolAllocator.get_last_loc_compressed",
+          "start_line": 173
+        },
+        {
+          "end_line": 177,
+          "name": "HiSparseTokenToKVPoolAllocator.get_last_loc_hisparse_device",
+          "start_line": 176
+        },
+        {
+          "end_line": 226,
+          "name": "HiSparseTokenToKVPoolAllocator.alloc_extend",
+          "start_line": 179
+        },
+        {
+          "end_line": 236,
+          "name": "HiSparseTokenToKVPoolAllocator.alloc_decode",
+          "start_line": 228
+        },
+        {
+          "end_line": 242,
+          "name": "HiSparseTokenToKVPoolAllocator.free_hisparse",
+          "start_line": 238
+        },
+        {
+          "end_line": 250,
+          "name": "HiSparseTokenToKVPoolAllocator.clear",
+          "start_line": 244
+        },
+        {
+          "end_line": 253,
+          "name": "HiSparseTokenToKVPoolAllocator.free_group_begin",
+          "start_line": 252
+        },
+        {
+          "end_line": 256,
+          "name": "HiSparseTokenToKVPoolAllocator.free_group_end",
+          "start_line": 255
+        },
+        {
+          "end_line": 273,
+          "name": "HiSparseTokenToKVPoolAllocator.free",
+          "start_line": 258
+        },
+        {
+          "end_line": 330,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.__init__",
+          "start_line": 278
+        },
+        {
+          "end_line": 334,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.size_full",
+          "start_line": 332
+        },
+        {
+          "end_line": 338,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.size",
+          "start_line": 336
+        },
+        {
+          "end_line": 342,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.size_swa",
+          "start_line": 340
+        },
+        {
+          "end_line": 346,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.full_to_swa_index_mapping",
+          "start_line": 344
+        },
+        {
+          "end_line": 354,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.debug_print",
+          "start_line": 348
+        },
+        {
+          "end_line": 357,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.get_kvcache",
+          "start_line": 356
+        },
+        {
+          "end_line": 360,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.translate_loc_from_full_to_swa",
+          "start_line": 359
+        },
+        {
+          "end_line": 366,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.full_available_size",
+          "start_line": 362
+        },
+        {
+          "end_line": 369,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.swa_available_size",
+          "start_line": 368
+        },
+        {
+          "end_line": 372,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.free_swa",
+          "start_line": 371
+        },
+        {
+          "end_line": 378,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.available_size",
+          "start_line": 374
+        },
+        {
+          "end_line": 384,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.alloc",
+          "start_line": 380
+        },
+        {
+          "end_line": 403,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.alloc_logical_only",
+          "start_line": 386
+        },
+        {
+          "end_line": 423,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.alloc_extend_swa_tail",
+          "start_line": 405
+        },
+        {
+          "end_line": 474,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.alloc_device_buffer",
+          "start_line": 425
+        },
+        {
+          "end_line": 478,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.free_hisparse_indices",
+          "start_line": 476
+        },
+        {
+          "end_line": 481,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.get_last_loc_compressed",
+          "start_line": 480
+        },
+        {
+          "end_line": 486,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.get_last_loc_hisparse_device",
+          "start_line": 483
+        },
+        {
+          "end_line": 547,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.alloc_extend",
+          "start_line": 488
+        },
+        {
+          "end_line": 557,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.alloc_decode",
+          "start_line": 549
+        },
+        {
+          "end_line": 565,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.free_compressed",
+          "start_line": 559
+        },
+        {
+          "end_line": 571,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.free_hisparse",
+          "start_line": 567
+        },
+        {
+          "end_line": 579,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.clear",
+          "start_line": 573
+        },
+        {
+          "end_line": 588,
+          "name": "DeepSeekV4HiSparseTokenToKVPoolAllocator.free",
+          "start_line": 581
+        }
+      ],
+      "output": "A02i-hisparse-allocator.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/allocator/hisparse.py",
+      "source_sha256": "54a520c56638c7f74a92efa48b23853d7a62f2caeeb58ebc3f8a409c47e9452e"
+    },
+    {
+      "class_count": 2,
+      "classes": [
+        {
+          "end_line": 407,
+          "name": "SWATokenToKVPoolAllocator",
+          "start_line": 20
+        },
+        {
+          "end_line": 524,
+          "name": "PureSWATokenToKVPoolAllocator",
+          "start_line": 410
+        }
+      ],
+      "function_count": 44,
+      "functions": [
+        {
+          "end_line": 101,
+          "name": "SWATokenToKVPoolAllocator.__init__",
+          "start_line": 23
+        },
+        {
+          "end_line": 107,
+          "name": "SWATokenToKVPoolAllocator.available_size",
+          "start_line": 103
+        },
+        {
+          "end_line": 110,
+          "name": "SWATokenToKVPoolAllocator.full_available_size",
+          "start_line": 109
+        },
+        {
+          "end_line": 113,
+          "name": "SWATokenToKVPoolAllocator.swa_available_size",
+          "start_line": 112
+        },
+        {
+          "end_line": 119,
+          "name": "SWATokenToKVPoolAllocator._conserve_full_available_size",
+          "start_line": 118
+        },
+        {
+          "end_line": 122,
+          "name": "SWATokenToKVPoolAllocator._conserve_swa_available_size",
+          "start_line": 121
+        },
+        {
+          "end_line": 126,
+          "name": "SWATokenToKVPoolAllocator.size",
+          "start_line": 124
+        },
+        {
+          "end_line": 130,
+          "name": "SWATokenToKVPoolAllocator.size_swa",
+          "start_line": 128
+        },
+        {
+          "end_line": 134,
+          "name": "SWATokenToKVPoolAllocator.size_full",
+          "start_line": 132
+        },
+        {
+          "end_line": 142,
+          "name": "SWATokenToKVPoolAllocator.debug_print",
+          "start_line": 136
+        },
+        {
+          "end_line": 145,
+          "name": "SWATokenToKVPoolAllocator.get_kvcache",
+          "start_line": 144
+        },
+        {
+          "end_line": 149,
+          "name": "SWATokenToKVPoolAllocator.translate_loc_from_full_to_swa",
+          "start_line": 147
+        },
+        {
+          "end_line": 164,
+          "name": "SWATokenToKVPoolAllocator.alloc",
+          "start_line": 151
+        },
+        {
+          "end_line": 172,
+          "name": "SWATokenToKVPoolAllocator.new_pages_available",
+          "start_line": 166
+        },
+        {
+          "end_line": 216,
+          "name": "SWATokenToKVPoolAllocator.alloc_extend",
+          "start_line": 174
+        },
+        {
+          "end_line": 285,
+          "name": "SWATokenToKVPoolAllocator.alloc_extend_swa_tail",
+          "start_line": 218
+        },
+        {
+          "end_line": 316,
+          "name": "SWATokenToKVPoolAllocator.alloc_decode",
+          "start_line": 287
+        },
+        {
+          "end_line": 331,
+          "name": "SWATokenToKVPoolAllocator.free",
+          "start_line": 318
+        },
+        {
+          "end_line": 345,
+          "name": "SWATokenToKVPoolAllocator.set_full_to_swa_mapping",
+          "start_line": 333
+        },
+        {
+          "end_line": 359,
+          "name": "SWATokenToKVPoolAllocator.free_swa",
+          "start_line": 347
+        },
+        {
+          "end_line": 366,
+          "name": "SWATokenToKVPoolAllocator._expand_to_full_pages",
+          "start_line": 361
+        },
+        {
+          "end_line": 372,
+          "name": "SWATokenToKVPoolAllocator.backup_state",
+          "start_line": 368
+        },
+        {
+          "end_line": 377,
+          "name": "SWATokenToKVPoolAllocator.restore_state",
+          "start_line": 374
+        },
+        {
+          "end_line": 391,
+          "name": "SWATokenToKVPoolAllocator.resize",
+          "start_line": 379
+        },
+        {
+          "end_line": 399,
+          "name": "SWATokenToKVPoolAllocator.clear",
+          "start_line": 393
+        },
+        {
+          "end_line": 402,
+          "name": "SWATokenToKVPoolAllocator.get_cpu_copy",
+          "start_line": 401
+        },
+        {
+          "end_line": 407,
+          "name": "SWATokenToKVPoolAllocator.load_cpu_copy",
+          "start_line": 404
+        },
+        {
+          "end_line": 454,
+          "name": "PureSWATokenToKVPoolAllocator.__init__",
+          "start_line": 413
+        },
+        {
+          "end_line": 457,
+          "name": "PureSWATokenToKVPoolAllocator.available_size",
+          "start_line": 456
+        },
+        {
+          "end_line": 460,
+          "name": "PureSWATokenToKVPoolAllocator.full_available_size",
+          "start_line": 459
+        },
+        {
+          "end_line": 463,
+          "name": "PureSWATokenToKVPoolAllocator.swa_available_size",
+          "start_line": 462
+        },
+        {
+          "end_line": 467,
+          "name": "PureSWATokenToKVPoolAllocator.new_pages_available",
+          "start_line": 465
+        },
+        {
+          "end_line": 470,
+          "name": "PureSWATokenToKVPoolAllocator.translate_loc_from_full_to_swa",
+          "start_line": 469
+        },
+        {
+          "end_line": 474,
+          "name": "PureSWATokenToKVPoolAllocator.alloc",
+          "start_line": 472
+        },
+        {
+          "end_line": 479,
+          "name": "PureSWATokenToKVPoolAllocator.alloc_extend",
+          "start_line": 476
+        },
+        {
+          "end_line": 484,
+          "name": "PureSWATokenToKVPoolAllocator.alloc_decode",
+          "start_line": 481
+        },
+        {
+          "end_line": 489,
+          "name": "PureSWATokenToKVPoolAllocator.alloc_extend_swa_tail",
+          "start_line": 486
+        },
+        {
+          "end_line": 498,
+          "name": "PureSWATokenToKVPoolAllocator.free",
+          "start_line": 491
+        },
+        {
+          "end_line": 503,
+          "name": "PureSWATokenToKVPoolAllocator.free_swa",
+          "start_line": 500
+        },
+        {
+          "end_line": 507,
+          "name": "PureSWATokenToKVPoolAllocator.free_group_begin",
+          "start_line": 505
+        },
+        {
+          "end_line": 513,
+          "name": "PureSWATokenToKVPoolAllocator.free_group_end",
+          "start_line": 509
+        },
+        {
+          "end_line": 516,
+          "name": "PureSWATokenToKVPoolAllocator.backup_state",
+          "start_line": 515
+        },
+        {
+          "end_line": 519,
+          "name": "PureSWATokenToKVPoolAllocator.restore_state",
+          "start_line": 518
+        },
+        {
+          "end_line": 524,
+          "name": "PureSWATokenToKVPoolAllocator.clear",
+          "start_line": 521
+        }
+      ],
+      "output": "A02j-swa-allocator.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/allocator/swa.py",
+      "source_sha256": "95a8be5d59cc7f48c0fe1c63a891938e8fc84bc310c1a14c4cdd5754d4fb5b91"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 97,
+          "name": "MambaSlotAllocator",
+          "start_line": 30
+        }
+      ],
+      "function_count": 9,
+      "functions": [
+        {
+          "end_line": 46,
+          "name": "MambaSlotAllocator.__init__",
+          "start_line": 38
+        },
+        {
+          "end_line": 49,
+          "name": "MambaSlotAllocator.available_size",
+          "start_line": 48
+        },
+        {
+          "end_line": 56,
+          "name": "MambaSlotAllocator.schedulable_available_size",
+          "start_line": 51
+        },
+        {
+          "end_line": 64,
+          "name": "MambaSlotAllocator.alloc_group_begin",
+          "start_line": 58
+        },
+        {
+          "end_line": 72,
+          "name": "MambaSlotAllocator.alloc_group_end",
+          "start_line": 66
+        },
+        {
+          "end_line": 79,
+          "name": "MambaSlotAllocator.alloc",
+          "start_line": 74
+        },
+        {
+          "end_line": 86,
+          "name": "MambaSlotAllocator._do_alloc",
+          "start_line": 81
+        },
+        {
+          "end_line": 91,
+          "name": "MambaSlotAllocator.free",
+          "start_line": 88
+        },
+        {
+          "end_line": 97,
+          "name": "MambaSlotAllocator.clear",
+          "start_line": 93
+        }
+      ],
+      "output": "A02k-mamba-allocator.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/allocator/mamba.py",
+      "source_sha256": "b3d4561b7f96aa55f615c491b3d5a8c8e72e156fd7e6cf639ee7f87cfd80674c"
+    },
+    {
+      "class_count": 3,
+      "classes": [
+        {
+          "end_line": 214,
+          "name": "RadixKey",
+          "start_line": 60
+        },
+        {
+          "end_line": 277,
+          "name": "TreeNode",
+          "start_line": 217
+        },
+        {
+          "end_line": 813,
+          "name": "RadixCache",
+          "start_line": 280
+        }
+      ],
+      "function_count": 45,
+      "functions": [
+        {
+          "end_line": 80,
+          "name": "RadixKey.__init__",
+          "start_line": 65
+        },
+        {
+          "end_line": 86,
+          "name": "RadixKey._raw_len",
+          "start_line": 82
+        },
+        {
+          "end_line": 92,
+          "name": "RadixKey.raw_token_ids",
+          "start_line": 88
+        },
+        {
+          "end_line": 98,
+          "name": "RadixKey.__len__",
+          "start_line": 94
+        },
+        {
+          "end_line": 111,
+          "name": "RadixKey.__iter__",
+          "start_line": 101
+        },
+        {
+          "end_line": 130,
+          "name": "RadixKey.__getitem__",
+          "start_line": 113
+        },
+        {
+          "end_line": 134,
+          "name": "RadixKey.__repr__",
+          "start_line": 132
+        },
+        {
+          "end_line": 140,
+          "name": "RadixKey.page_aligned",
+          "start_line": 136
+        },
+        {
+          "end_line": 153,
+          "name": "RadixKey.maybe_to_bigram_view",
+          "start_line": 142
+        },
+        {
+          "end_line": 160,
+          "name": "RadixKey._check_compatible",
+          "start_line": 155
+        },
+        {
+          "end_line": 196,
+          "name": "RadixKey.match",
+          "start_line": 162
+        },
+        {
+          "end_line": 208,
+          "name": "RadixKey.child_key",
+          "start_line": 198
+        },
+        {
+          "end_line": 214,
+          "name": "RadixKey.hash_page",
+          "start_line": 210
+        },
+        {
+          "end_line": 243,
+          "name": "TreeNode.__init__",
+          "start_line": 221
+        },
+        {
+          "end_line": 247,
+          "name": "TreeNode.evicted",
+          "start_line": 245
+        },
+        {
+          "end_line": 251,
+          "name": "TreeNode.backuped",
+          "start_line": 249
+        },
+        {
+          "end_line": 255,
+          "name": "TreeNode.protect_host",
+          "start_line": 253
+        },
+        {
+          "end_line": 262,
+          "name": "TreeNode.release_host",
+          "start_line": 257
+        },
+        {
+          "end_line": 268,
+          "name": "TreeNode.get_last_hash_value",
+          "start_line": 264
+        },
+        {
+          "end_line": 274,
+          "name": "TreeNode.get_prefix_hash_values",
+          "start_line": 270
+        },
+        {
+          "end_line": 277,
+          "name": "TreeNode.__lt__",
+          "start_line": 276
+        },
+        {
+          "end_line": 309,
+          "name": "RadixCache.__init__",
+          "start_line": 281
+        },
+        {
+          "end_line": 327,
+          "name": "RadixCache.create_simulated",
+          "start_line": 311
+        },
+        {
+          "end_line": 353,
+          "name": "RadixCache.reset",
+          "start_line": 331
+        },
+        {
+          "end_line": 413,
+          "name": "RadixCache.match_prefix",
+          "start_line": 355
+        },
+        {
+          "end_line": 435,
+          "name": "RadixCache.insert",
+          "start_line": 415
+        },
+        {
+          "end_line": 486,
+          "name": "RadixCache.cache_finished_req",
+          "start_line": 437
+        },
+        {
+          "end_line": 554,
+          "name": "RadixCache.cache_unfinished_req",
+          "start_line": 488
+        },
+        {
+          "end_line": 558,
+          "name": "RadixCache.pretty_print",
+          "start_line": 556
+        },
+        {
+          "end_line": 561,
+          "name": "RadixCache.total_size",
+          "start_line": 560
+        },
+        {
+          "end_line": 590,
+          "name": "RadixCache.evict",
+          "start_line": 563
+        },
+        {
+          "end_line": 605,
+          "name": "RadixCache.inc_lock_ref",
+          "start_line": 592
+        },
+        {
+          "end_line": 626,
+          "name": "RadixCache.dec_lock_ref",
+          "start_line": 607
+        },
+        {
+          "end_line": 629,
+          "name": "RadixCache.evictable_size",
+          "start_line": 628
+        },
+        {
+          "end_line": 633,
+          "name": "RadixCache.protected_size",
+          "start_line": 631
+        },
+        {
+          "end_line": 644,
+          "name": "RadixCache.all_values_flatten",
+          "start_line": 635
+        },
+        {
+          "end_line": 641,
+          "name": "RadixCache.all_values_flatten.<local>._dfs_helper",
+          "start_line": 638
+        },
+        {
+          "end_line": 672,
+          "name": "RadixCache._match_prefix_helper",
+          "start_line": 648
+        },
+        {
+          "end_line": 694,
+          "name": "RadixCache._split_node",
+          "start_line": 674
+        },
+        {
+          "end_line": 702,
+          "name": "RadixCache._inc_hit_count",
+          "start_line": 696
+        },
+        {
+          "end_line": 757,
+          "name": "RadixCache._insert_helper",
+          "start_line": 704
+        },
+        {
+          "end_line": 775,
+          "name": "RadixCache._print_helper",
+          "start_line": 759
+        },
+        {
+          "end_line": 786,
+          "name": "RadixCache._delete_leaf",
+          "start_line": 777
+        },
+        {
+          "end_line": 801,
+          "name": "RadixCache._update_leaf_status",
+          "start_line": 788
+        },
+        {
+          "end_line": 813,
+          "name": "RadixCache._total_size_helper",
+          "start_line": 803
+        }
+      ],
+      "output": "A03-radix-cache.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/radix_cache.py",
+      "source_sha256": "17fef234eb9a14a7b6727b5b7bdfd6b74fd87ab819651861b2ceb14ca941e94c"
+    },
+    {
+      "class_count": 8,
+      "classes": [
+        {
+          "end_line": 13,
+          "name": "EvictionStrategy",
+          "start_line": 10
+        },
+        {
+          "end_line": 18,
+          "name": "LRUStrategy",
+          "start_line": 16
+        },
+        {
+          "end_line": 23,
+          "name": "LFUStrategy",
+          "start_line": 21
+        },
+        {
+          "end_line": 28,
+          "name": "FIFOStrategy",
+          "start_line": 26
+        },
+        {
+          "end_line": 33,
+          "name": "MRUStrategy",
+          "start_line": 31
+        },
+        {
+          "end_line": 38,
+          "name": "FILOStrategy",
+          "start_line": 36
+        },
+        {
+          "end_line": 46,
+          "name": "PriorityStrategy",
+          "start_line": 41
+        },
+        {
+          "end_line": 65,
+          "name": "SLRUStrategy",
+          "start_line": 49
+        }
+      ],
+      "function_count": 9,
+      "functions": [
+        {
+          "end_line": 13,
+          "name": "EvictionStrategy.get_priority",
+          "start_line": 11
+        },
+        {
+          "end_line": 18,
+          "name": "LRUStrategy.get_priority",
+          "start_line": 17
+        },
+        {
+          "end_line": 23,
+          "name": "LFUStrategy.get_priority",
+          "start_line": 22
+        },
+        {
+          "end_line": 28,
+          "name": "FIFOStrategy.get_priority",
+          "start_line": 27
+        },
+        {
+          "end_line": 33,
+          "name": "MRUStrategy.get_priority",
+          "start_line": 32
+        },
+        {
+          "end_line": 38,
+          "name": "FILOStrategy.get_priority",
+          "start_line": 37
+        },
+        {
+          "end_line": 46,
+          "name": "PriorityStrategy.get_priority",
+          "start_line": 44
+        },
+        {
+          "end_line": 51,
+          "name": "SLRUStrategy.__init__",
+          "start_line": 50
+        },
+        {
+          "end_line": 65,
+          "name": "SLRUStrategy.get_priority",
+          "start_line": 53
+        }
+      ],
+      "output": "A03b-eviction-policy.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/evict_policy.py",
+      "source_sha256": "8e839aa19244b870db52577ed06c7e1b4c02302813d33cca1f2d49ff190b929f"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 128,
+          "name": "KVCacheEventMixin",
+          "start_line": 34
+        }
+      ],
+      "function_count": 4,
+      "functions": [
+        {
+          "end_line": 84,
+          "name": "KVCacheEventMixin._record_store_event",
+          "start_line": 35
+        },
+        {
+          "end_line": 112,
+          "name": "KVCacheEventMixin._record_remove_event",
+          "start_line": 86
+        },
+        {
+          "end_line": 116,
+          "name": "KVCacheEventMixin._record_all_cleared_event",
+          "start_line": 114
+        },
+        {
+          "end_line": 128,
+          "name": "KVCacheEventMixin.take_events",
+          "start_line": 118
+        }
+      ],
+      "output": "A03c-cache-events.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/events.py",
+      "source_sha256": "74aedbecdc93ce3a86589a515911657ae693d5bdc005c77cf8d381a004e05d75"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 121,
+          "name": "SessionRadixCacheMixin",
+          "start_line": 23
+        }
+      ],
+      "function_count": 6,
+      "functions": [
+        {
+          "end_line": 31,
+          "name": "SessionRadixCacheMixin._reset_session_radix_state",
+          "start_line": 29
+        },
+        {
+          "end_line": 35,
+          "name": "SessionRadixCacheMixin._ensure_session_radix_state",
+          "start_line": 33
+        },
+        {
+          "end_line": 41,
+          "name": "SessionRadixCacheMixin._remember_closed_session",
+          "start_line": 37
+        },
+        {
+          "end_line": 54,
+          "name": "SessionRadixCacheMixin._discard_session_leaf",
+          "start_line": 43
+        },
+        {
+          "end_line": 82,
+          "name": "SessionRadixCacheMixin._tag_session_leaf",
+          "start_line": 56
+        },
+        {
+          "end_line": 121,
+          "name": "SessionRadixCacheMixin.release_radix_session",
+          "start_line": 84
+        }
+      ],
+      "output": "A03d-session-radix.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/session_radix_cache.py",
+      "source_sha256": "2206735e6780e2ef1134f63b49b99eb58f266b1e03f9584efddc829b234c873e"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 1851,
+          "name": "HiRadixCache",
+          "start_line": 75
+        }
+      ],
+      "function_count": 67,
+      "functions": [
+        {
+          "end_line": 212,
+          "name": "HiRadixCache.__init__",
+          "start_line": 77
+        },
+        {
+          "end_line": 221,
+          "name": "HiRadixCache._all_reduce_attn_groups",
+          "start_line": 214
+        },
+        {
+          "end_line": 230,
+          "name": "HiRadixCache._barrier_attn_groups",
+          "start_line": 223
+        },
+        {
+          "end_line": 242,
+          "name": "HiRadixCache._drain_async_work",
+          "start_line": 232
+        },
+        {
+          "end_line": 255,
+          "name": "HiRadixCache._all_reduce",
+          "start_line": 244
+        },
+        {
+          "end_line": 300,
+          "name": "HiRadixCache._pp_sync",
+          "start_line": 257
+        },
+        {
+          "end_line": 312,
+          "name": "HiRadixCache.shutdown",
+          "start_line": 302
+        },
+        {
+          "end_line": 364,
+          "name": "HiRadixCache._apply_storage_runtime_config",
+          "start_line": 314
+        },
+        {
+          "end_line": 482,
+          "name": "HiRadixCache.attach_storage_backend",
+          "start_line": 366
+        },
+        {
+          "end_line": 511,
+          "name": "HiRadixCache.detach_storage_backend",
+          "start_line": 484
+        },
+        {
+          "end_line": 570,
+          "name": "HiRadixCache._force_release_pending_storage_ops",
+          "start_line": 513
+        },
+        {
+          "end_line": 583,
+          "name": "HiRadixCache._drain_storage_control_queues_local",
+          "start_line": 572
+        },
+        {
+          "end_line": 635,
+          "name": "HiRadixCache._drain_storage_control_queues_impl",
+          "start_line": 585
+        },
+        {
+          "end_line": 602,
+          "name": "HiRadixCache._drain_storage_control_queues_impl.<local>._drain_queue",
+          "start_line": 594
+        },
+        {
+          "end_line": 612,
+          "name": "HiRadixCache._drain_storage_control_queues_impl.<local>._drain_revoke",
+          "start_line": 604
+        },
+        {
+          "end_line": 623,
+          "name": "HiRadixCache._drain_storage_control_queues_impl.<local>._drain_backup",
+          "start_line": 614
+        },
+        {
+          "end_line": 631,
+          "name": "HiRadixCache._drain_storage_control_queues_impl.<local>._drain_release",
+          "start_line": 625
+        },
+        {
+          "end_line": 727,
+          "name": "HiRadixCache._parse_storage_backend_extra_config",
+          "start_line": 637
+        },
+        {
+          "end_line": 736,
+          "name": "HiRadixCache.reset",
+          "start_line": 729
+        },
+        {
+          "end_line": 743,
+          "name": "HiRadixCache.get_height",
+          "start_line": 738
+        },
+        {
+          "end_line": 759,
+          "name": "HiRadixCache._get_extra_pools",
+          "start_line": 745
+        },
+        {
+          "end_line": 765,
+          "name": "HiRadixCache._get_hybrid_storage_attach_kwargs",
+          "start_line": 761
+        },
+        {
+          "end_line": 787,
+          "name": "HiRadixCache.clear_storage_backend",
+          "start_line": 767
+        },
+        {
+          "end_line": 819,
+          "name": "HiRadixCache.write_backup",
+          "start_line": 789
+        },
+        {
+          "end_line": 823,
+          "name": "HiRadixCache._track_write_through_node",
+          "start_line": 821
+        },
+        {
+          "end_line": 851,
+          "name": "HiRadixCache._replace_pending_write_through_node",
+          "start_line": 825
+        },
+        {
+          "end_line": 863,
+          "name": "HiRadixCache._finish_write_through_ack",
+          "start_line": 853
+        },
+        {
+          "end_line": 890,
+          "name": "HiRadixCache.write_backup_storage",
+          "start_line": 865
+        },
+        {
+          "end_line": 924,
+          "name": "HiRadixCache._concat_split_chain",
+          "start_line": 892
+        },
+        {
+          "end_line": 935,
+          "name": "HiRadixCache._inc_hit_count",
+          "start_line": 926
+        },
+        {
+          "end_line": 970,
+          "name": "HiRadixCache.writing_check",
+          "start_line": 937
+        },
+        {
+          "end_line": 991,
+          "name": "HiRadixCache.loading_check",
+          "start_line": 972
+        },
+        {
+          "end_line": 1005,
+          "name": "HiRadixCache.is_load_back_event_done",
+          "start_line": 993
+        },
+        {
+          "end_line": 1008,
+          "name": "HiRadixCache.evictable_size",
+          "start_line": 1007
+        },
+        {
+          "end_line": 1024,
+          "name": "HiRadixCache.inc_lock_ref",
+          "start_line": 1010
+        },
+        {
+          "end_line": 1046,
+          "name": "HiRadixCache.dec_lock_ref",
+          "start_line": 1026
+        },
+        {
+          "end_line": 1061,
+          "name": "HiRadixCache._update_host_leaf_status",
+          "start_line": 1048
+        },
+        {
+          "end_line": 1071,
+          "name": "HiRadixCache.evict",
+          "start_line": 1063
+        },
+        {
+          "end_line": 1079,
+          "name": "HiRadixCache._make_eviction_heap",
+          "start_line": 1073
+        },
+        {
+          "end_line": 1085,
+          "name": "HiRadixCache._promote_parent",
+          "start_line": 1081
+        },
+        {
+          "end_line": 1103,
+          "name": "HiRadixCache._evict_write_through",
+          "start_line": 1087
+        },
+        {
+          "end_line": 1137,
+          "name": "HiRadixCache._evict_write_back",
+          "start_line": 1105
+        },
+        {
+          "end_line": 1120,
+          "name": "HiRadixCache._evict_write_back.<local>.flush_staged",
+          "start_line": 1113
+        },
+        {
+          "end_line": 1150,
+          "name": "HiRadixCache._detach_backuped",
+          "start_line": 1139
+        },
+        {
+          "end_line": 1156,
+          "name": "HiRadixCache._evict_backuped",
+          "start_line": 1152
+        },
+        {
+          "end_line": 1166,
+          "name": "HiRadixCache._evict_regular",
+          "start_line": 1158
+        },
+        {
+          "end_line": 1205,
+          "name": "HiRadixCache._drop_subtree_no_host",
+          "start_line": 1168
+        },
+        {
+          "end_line": 1240,
+          "name": "HiRadixCache.evict_host",
+          "start_line": 1207
+        },
+        {
+          "end_line": 1320,
+          "name": "HiRadixCache.load_back",
+          "start_line": 1242
+        },
+        {
+          "end_line": 1342,
+          "name": "HiRadixCache.init_load_back",
+          "start_line": 1322
+        },
+        {
+          "end_line": 1387,
+          "name": "HiRadixCache.query_storage_hit_length",
+          "start_line": 1344
+        },
+        {
+          "end_line": 1394,
+          "name": "HiRadixCache.ready_to_load_host_cache",
+          "start_line": 1389
+        },
+        {
+          "end_line": 1397,
+          "name": "HiRadixCache.flush_write_through_acks",
+          "start_line": 1396
+        },
+        {
+          "end_line": 1409,
+          "name": "HiRadixCache.check_hicache_events",
+          "start_line": 1399
+        },
+        {
+          "end_line": 1434,
+          "name": "HiRadixCache.drain_storage_control_queues",
+          "start_line": 1411
+        },
+        {
+          "end_line": 1441,
+          "name": "HiRadixCache._prefetch_timeout_check_linear_func",
+          "start_line": 1437
+        },
+        {
+          "end_line": 1482,
+          "name": "HiRadixCache.can_terminate_prefetch",
+          "start_line": 1443
+        },
+        {
+          "end_line": 1538,
+          "name": "HiRadixCache.check_prefetch_progress",
+          "start_line": 1484
+        },
+        {
+          "end_line": 1547,
+          "name": "HiRadixCache.terminate_prefetch",
+          "start_line": 1540
+        },
+        {
+          "end_line": 1555,
+          "name": "HiRadixCache.pop_prefetch_loaded_tokens",
+          "start_line": 1549
+        },
+        {
+          "end_line": 1588,
+          "name": "HiRadixCache.match_prefix",
+          "start_line": 1557
+        },
+        {
+          "end_line": 1647,
+          "name": "HiRadixCache.prefetch_from_storage",
+          "start_line": 1590
+        },
+        {
+          "end_line": 1690,
+          "name": "HiRadixCache._insert_helper_host",
+          "start_line": 1649
+        },
+        {
+          "end_line": 1716,
+          "name": "HiRadixCache._match_prefix_helper",
+          "start_line": 1692
+        },
+        {
+          "end_line": 1747,
+          "name": "HiRadixCache._split_node",
+          "start_line": 1718
+        },
+        {
+          "end_line": 1831,
+          "name": "HiRadixCache.insert",
+          "start_line": 1749
+        },
+        {
+          "end_line": 1851,
+          "name": "HiRadixCache.release_aborted_request",
+          "start_line": 1833
+        }
+      ],
+      "output": "A04-hiradix-cache.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/hiradix_cache.py",
+      "source_sha256": "01adf720ec02c223b8eb817c0ba2c9f6a7f31579e5138699fa039359e362549f"
+    },
+    {
+      "class_count": 7,
+      "classes": [
+        {
+          "end_line": 64,
+          "name": "LayerLoadingEvent",
+          "start_line": 49
+        },
+        {
+          "end_line": 95,
+          "name": "LayerDoneCounter",
+          "start_line": 67
+        },
+        {
+          "end_line": 136,
+          "name": "CacheOperation",
+          "start_line": 98
+        },
+        {
+          "end_line": 142,
+          "name": "HiCacheAck",
+          "start_line": 139
+        },
+        {
+          "end_line": 167,
+          "name": "StorageOperation",
+          "start_line": 145
+        },
+        {
+          "end_line": 199,
+          "name": "PrefetchOperation",
+          "start_line": 170
+        },
+        {
+          "end_line": 1201,
+          "name": "HiCacheController",
+          "start_line": 202
+        }
+      ],
+      "function_count": 59,
+      "functions": [
+        {
+          "end_line": 53,
+          "name": "LayerLoadingEvent.__init__",
+          "start_line": 50
+        },
+        {
+          "end_line": 57,
+          "name": "LayerLoadingEvent.complete",
+          "start_line": 55
+        },
+        {
+          "end_line": 60,
+          "name": "LayerLoadingEvent.wait",
+          "start_line": 59
+        },
+        {
+          "end_line": 64,
+          "name": "LayerLoadingEvent.finish_event",
+          "start_line": 62
+        },
+        {
+          "end_line": 74,
+          "name": "LayerDoneCounter.__init__",
+          "start_line": 68
+        },
+        {
+          "end_line": 83,
+          "name": "LayerDoneCounter.update_producer",
+          "start_line": 76
+        },
+        {
+          "end_line": 86,
+          "name": "LayerDoneCounter.set_consumer",
+          "start_line": 85
+        },
+        {
+          "end_line": 91,
+          "name": "LayerDoneCounter.wait_until",
+          "start_line": 88
+        },
+        {
+          "end_line": 95,
+          "name": "LayerDoneCounter.reset",
+          "start_line": 93
+        },
+        {
+          "end_line": 117,
+          "name": "CacheOperation.__init__",
+          "start_line": 102
+        },
+        {
+          "end_line": 133,
+          "name": "CacheOperation.merge_ops",
+          "start_line": 119
+        },
+        {
+          "end_line": 136,
+          "name": "CacheOperation.__lt__",
+          "start_line": 135
+        },
+        {
+          "end_line": 164,
+          "name": "StorageOperation.__init__",
+          "start_line": 148
+        },
+        {
+          "end_line": 167,
+          "name": "StorageOperation.__lt__",
+          "start_line": 166
+        },
+        {
+          "end_line": 185,
+          "name": "PrefetchOperation.__init__",
+          "start_line": 171
+        },
+        {
+          "end_line": 192,
+          "name": "PrefetchOperation.increment",
+          "start_line": 187
+        },
+        {
+          "end_line": 196,
+          "name": "PrefetchOperation.mark_terminate",
+          "start_line": 194
+        },
+        {
+          "end_line": 199,
+          "name": "PrefetchOperation.is_terminated",
+          "start_line": 198
+        },
+        {
+          "end_line": 290,
+          "name": "HiCacheController.__init__",
+          "start_line": 204
+        },
+        {
+          "end_line": 299,
+          "name": "HiCacheController.get_attn_cp_rank_and_size",
+          "start_line": 292
+        },
+        {
+          "end_line": 323,
+          "name": "HiCacheController._create_prefetch_sync_groups",
+          "start_line": 301
+        },
+        {
+          "end_line": 331,
+          "name": "HiCacheController._destroy_prefetch_sync_groups",
+          "start_line": 325
+        },
+        {
+          "end_line": 335,
+          "name": "HiCacheController._all_reduce_prefetch_groups",
+          "start_line": 333
+        },
+        {
+          "end_line": 359,
+          "name": "HiCacheController._start_storage_threads",
+          "start_line": 337
+        },
+        {
+          "end_line": 405,
+          "name": "HiCacheController._stop_storage_threads",
+          "start_line": 361
+        },
+        {
+          "end_line": 510,
+          "name": "HiCacheController.attach_storage_backend",
+          "start_line": 407
+        },
+        {
+          "end_line": 554,
+          "name": "HiCacheController.detach_storage_backend",
+          "start_line": 512
+        },
+        {
+          "end_line": 617,
+          "name": "HiCacheController._generate_storage_config",
+          "start_line": 556
+        },
+        {
+          "end_line": 646,
+          "name": "HiCacheController.reset",
+          "start_line": 619
+        },
+        {
+          "end_line": 664,
+          "name": "HiCacheController.write",
+          "start_line": 648
+        },
+        {
+          "end_line": 716,
+          "name": "HiCacheController.start_writing",
+          "start_line": 666
+        },
+        {
+          "end_line": 733,
+          "name": "HiCacheController.load",
+          "start_line": 718
+        },
+        {
+          "end_line": 755,
+          "name": "HiCacheController.move_indices",
+          "start_line": 735
+        },
+        {
+          "end_line": 804,
+          "name": "HiCacheController.start_loading",
+          "start_line": 757
+        },
+        {
+          "end_line": 808,
+          "name": "HiCacheController.evict_device",
+          "start_line": 806
+        },
+        {
+          "end_line": 815,
+          "name": "HiCacheController.evict_host",
+          "start_line": 810
+        },
+        {
+          "end_line": 830,
+          "name": "HiCacheController.set_draft_kv_pool",
+          "start_line": 817
+        },
+        {
+          "end_line": 867,
+          "name": "HiCacheController._maybe_register_draft_with_storage",
+          "start_line": 832
+        },
+        {
+          "end_line": 884,
+          "name": "HiCacheController.prefetch",
+          "start_line": 869
+        },
+        {
+          "end_line": 888,
+          "name": "HiCacheController.terminate_prefetch",
+          "start_line": 886
+        },
+        {
+          "end_line": 895,
+          "name": "HiCacheController.append_host_mem_release",
+          "start_line": 890
+        },
+        {
+          "end_line": 911,
+          "name": "HiCacheController._page_get_zero_copy",
+          "start_line": 897
+        },
+        {
+          "end_line": 934,
+          "name": "HiCacheController._generic_page_get",
+          "start_line": 914
+        },
+        {
+          "end_line": 964,
+          "name": "HiCacheController._page_transfer",
+          "start_line": 936
+        },
+        {
+          "end_line": 981,
+          "name": "HiCacheController.prefetch_io_aux_func",
+          "start_line": 966
+        },
+        {
+          "end_line": 991,
+          "name": "HiCacheController.prefetch_rate_limited",
+          "start_line": 983
+        },
+        {
+          "end_line": 1015,
+          "name": "HiCacheController._storage_hit_query",
+          "start_line": 993
+        },
+        {
+          "end_line": 1062,
+          "name": "HiCacheController.prefetch_thread_func",
+          "start_line": 1017
+        },
+        {
+          "end_line": 1078,
+          "name": "HiCacheController.write_storage",
+          "start_line": 1064
+        },
+        {
+          "end_line": 1086,
+          "name": "HiCacheController._generic_page_set",
+          "start_line": 1081
+        },
+        {
+          "end_line": 1091,
+          "name": "HiCacheController._page_set_zero_copy",
+          "start_line": 1088
+        },
+        {
+          "end_line": 1102,
+          "name": "HiCacheController._draft_page_set",
+          "start_line": 1093
+        },
+        {
+          "end_line": 1111,
+          "name": "HiCacheController._draft_page_get",
+          "start_line": 1104
+        },
+        {
+          "end_line": 1122,
+          "name": "HiCacheController._draft_page_set_v2",
+          "start_line": 1113
+        },
+        {
+          "end_line": 1133,
+          "name": "HiCacheController._draft_page_get_v2",
+          "start_line": 1124
+        },
+        {
+          "end_line": 1143,
+          "name": "HiCacheController._draft_page_set_generic",
+          "start_line": 1135
+        },
+        {
+          "end_line": 1157,
+          "name": "HiCacheController._draft_page_get_generic",
+          "start_line": 1145
+        },
+        {
+          "end_line": 1184,
+          "name": "HiCacheController._page_backup",
+          "start_line": 1160
+        },
+        {
+          "end_line": 1201,
+          "name": "HiCacheController.backup_thread_func",
+          "start_line": 1186
+        }
+      ],
+      "output": "A05-cache-controller.md",
+      "scope": "all",
+      "source": "python/sglang/srt/managers/cache_controller.py",
+      "source_sha256": "6b29932753d63fd7e5903c4a7e65f1985af17dabb0937799b6463ac7f341101d"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 305,
+          "name": "HostKVCache",
+          "start_line": 81
+        }
+      ],
+      "function_count": 23,
+      "functions": [
+        {
+          "end_line": 69,
+          "name": "sync_fixed_hicache_size",
+          "start_line": 30
+        },
+        {
+          "end_line": 78,
+          "name": "synchronized",
+          "start_line": 72
+        },
+        {
+          "end_line": 76,
+          "name": "synchronized.<local>.wrapper",
+          "start_line": 73
+        },
+        {
+          "end_line": 145,
+          "name": "HostKVCache.__init__",
+          "start_line": 83
+        },
+        {
+          "end_line": 165,
+          "name": "HostKVCache.destroy",
+          "start_line": 147
+        },
+        {
+          "end_line": 169,
+          "name": "HostKVCache.get_size_per_token",
+          "start_line": 167
+        },
+        {
+          "end_line": 173,
+          "name": "HostKVCache._is_device_layer_sharded",
+          "start_line": 171
+        },
+        {
+          "end_line": 183,
+          "name": "HostKVCache._device_owned_layer_range",
+          "start_line": 175
+        },
+        {
+          "end_line": 191,
+          "name": "HostKVCache._effective_host_layer_num",
+          "start_line": 185
+        },
+        {
+          "end_line": 195,
+          "name": "HostKVCache._is_device_layer_owned",
+          "start_line": 193
+        },
+        {
+          "end_line": 200,
+          "name": "HostKVCache._host_layer_index",
+          "start_line": 197
+        },
+        {
+          "end_line": 204,
+          "name": "HostKVCache._owned_device_layer_ids",
+          "start_line": 202
+        },
+        {
+          "end_line": 208,
+          "name": "HostKVCache.init_kv_buffer",
+          "start_line": 206
+        },
+        {
+          "end_line": 217,
+          "name": "HostKVCache.load_to_device_per_layer",
+          "start_line": 210
+        },
+        {
+          "end_line": 226,
+          "name": "HostKVCache.backup_from_device_all_layer",
+          "start_line": 219
+        },
+        {
+          "end_line": 233,
+          "name": "HostKVCache.get_data_page",
+          "start_line": 228
+        },
+        {
+          "end_line": 241,
+          "name": "HostKVCache.get_dummy_flat_data_page",
+          "start_line": 235
+        },
+        {
+          "end_line": 248,
+          "name": "HostKVCache.set_from_flat_data_page",
+          "start_line": 243
+        },
+        {
+          "end_line": 261,
+          "name": "HostKVCache.is_stride_page_aligned",
+          "start_line": 250
+        },
+        {
+          "end_line": 272,
+          "name": "HostKVCache.clear",
+          "start_line": 263
+        },
+        {
+          "end_line": 275,
+          "name": "HostKVCache.available_size",
+          "start_line": 274
+        },
+        {
+          "end_line": 294,
+          "name": "HostKVCache.alloc",
+          "start_line": 277
+        },
+        {
+          "end_line": 305,
+          "name": "HostKVCache.free",
+          "start_line": 296
+        }
+      ],
+      "output": "A06-host-pool-base.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/pool_host/base.py",
+      "source_sha256": "363fd88e20d606d10f576cb1b328eed1fe8c85ea535e687bcc490bc2c0457c18"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 25,
+          "name": "HostTensorAllocator",
+          "start_line": 13
+        }
+      ],
+      "function_count": 7,
+      "functions": [
+        {
+          "end_line": 17,
+          "name": "HostTensorAllocator.__init__",
+          "start_line": 14
+        },
+        {
+          "end_line": 25,
+          "name": "HostTensorAllocator.allocate",
+          "start_line": 19
+        },
+        {
+          "end_line": 58,
+          "name": "get_allocator_from_storage",
+          "start_line": 28
+        },
+        {
+          "end_line": 71,
+          "name": "_cuda_host_register",
+          "start_line": 61
+        },
+        {
+          "end_line": 84,
+          "name": "_cuda_host_unregister",
+          "start_line": 74
+        },
+        {
+          "end_line": 101,
+          "name": "alloc_with_host_register",
+          "start_line": 87
+        },
+        {
+          "end_line": 115,
+          "name": "alloc_with_pin_memory",
+          "start_line": 104
+        }
+      ],
+      "output": "A07-host-pool-common.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/pool_host/common.py",
+      "source_sha256": "b126c784886034229ec0decc50072784195fdc57c8cd100e377ad213c371ef42"
+    },
+    {
+      "class_count": 3,
+      "classes": [
+        {
+          "end_line": 619,
+          "name": "MHATokenToKVPoolHost",
+          "start_line": 66
+        },
+        {
+          "end_line": 929,
+          "name": "MHATokenToKOnlyPoolHost",
+          "start_line": 622
+        },
+        {
+          "end_line": 1230,
+          "name": "AsymmetricMHATokenToKVPoolHost",
+          "start_line": 932
+        }
+      ],
+      "function_count": 43,
+      "functions": [
+        {
+          "end_line": 119,
+          "name": "MHATokenToKVPoolHost.__init__",
+          "start_line": 69
+        },
+        {
+          "end_line": 125,
+          "name": "MHATokenToKVPoolHost.get_size_per_token",
+          "start_line": 121
+        },
+        {
+          "end_line": 128,
+          "name": "MHATokenToKVPoolHost.get_ksize_per_token",
+          "start_line": 127
+        },
+        {
+          "end_line": 166,
+          "name": "MHATokenToKVPoolHost.init_kv_buffer",
+          "start_line": 130
+        },
+        {
+          "end_line": 199,
+          "name": "MHATokenToKVPoolHost._init_write_back_staging_buffers",
+          "start_line": 168
+        },
+        {
+          "end_line": 203,
+          "name": "MHATokenToKVPoolHost.k_buffer",
+          "start_line": 201
+        },
+        {
+          "end_line": 207,
+          "name": "MHATokenToKVPoolHost.v_buffer",
+          "start_line": 205
+        },
+        {
+          "end_line": 324,
+          "name": "MHATokenToKVPoolHost.load_to_device_per_layer",
+          "start_line": 209
+        },
+        {
+          "end_line": 429,
+          "name": "MHATokenToKVPoolHost.backup_from_device_all_layer",
+          "start_line": 326
+        },
+        {
+          "end_line": 443,
+          "name": "MHATokenToKVPoolHost.get_data_page",
+          "start_line": 431
+        },
+        {
+          "end_line": 451,
+          "name": "MHATokenToKVPoolHost.get_dummy_flat_data_page",
+          "start_line": 445
+        },
+        {
+          "end_line": 485,
+          "name": "MHATokenToKVPoolHost.set_from_flat_data_page",
+          "start_line": 453
+        },
+        {
+          "end_line": 533,
+          "name": "MHATokenToKVPoolHost.get_split_heads_page_buffer_meta",
+          "start_line": 487
+        },
+        {
+          "end_line": 595,
+          "name": "MHATokenToKVPoolHost.get_page_buffer_meta",
+          "start_line": 535
+        },
+        {
+          "end_line": 619,
+          "name": "MHATokenToKVPoolHost.is_stride_page_aligned",
+          "start_line": 597
+        },
+        {
+          "end_line": 695,
+          "name": "MHATokenToKOnlyPoolHost.__init__",
+          "start_line": 627
+        },
+        {
+          "end_line": 698,
+          "name": "MHATokenToKOnlyPoolHost.get_size_per_token",
+          "start_line": 697
+        },
+        {
+          "end_line": 701,
+          "name": "MHATokenToKOnlyPoolHost.get_ksize_per_token",
+          "start_line": 700
+        },
+        {
+          "end_line": 725,
+          "name": "MHATokenToKOnlyPoolHost.init_kv_buffer",
+          "start_line": 703
+        },
+        {
+          "end_line": 728,
+          "name": "MHATokenToKOnlyPoolHost.get_hybrid_pool_buffer",
+          "start_line": 727
+        },
+        {
+          "end_line": 793,
+          "name": "MHATokenToKOnlyPoolHost.load_to_device_per_layer",
+          "start_line": 730
+        },
+        {
+          "end_line": 861,
+          "name": "MHATokenToKOnlyPoolHost.backup_from_device_all_layer",
+          "start_line": 795
+        },
+        {
+          "end_line": 875,
+          "name": "MHATokenToKOnlyPoolHost.get_data_page",
+          "start_line": 863
+        },
+        {
+          "end_line": 883,
+          "name": "MHATokenToKOnlyPoolHost.get_dummy_flat_data_page",
+          "start_line": 877
+        },
+        {
+          "end_line": 900,
+          "name": "MHATokenToKOnlyPoolHost.set_from_flat_data_page",
+          "start_line": 885
+        },
+        {
+          "end_line": 929,
+          "name": "MHATokenToKOnlyPoolHost.get_page_buffer_meta",
+          "start_line": 902
+        },
+        {
+          "end_line": 954,
+          "name": "AsymmetricMHATokenToKVPoolHost.get_size_per_token",
+          "start_line": 944
+        },
+        {
+          "end_line": 957,
+          "name": "AsymmetricMHATokenToKVPoolHost.get_ksize_per_token",
+          "start_line": 956
+        },
+        {
+          "end_line": 1004,
+          "name": "AsymmetricMHATokenToKVPoolHost.init_kv_buffer",
+          "start_line": 959
+        },
+        {
+          "end_line": 1007,
+          "name": "AsymmetricMHATokenToKVPoolHost._k_token_stride_size",
+          "start_line": 1006
+        },
+        {
+          "end_line": 1010,
+          "name": "AsymmetricMHATokenToKVPoolHost._v_token_stride_size",
+          "start_line": 1009
+        },
+        {
+          "end_line": 1013,
+          "name": "AsymmetricMHATokenToKVPoolHost._k_layout_dim",
+          "start_line": 1012
+        },
+        {
+          "end_line": 1016,
+          "name": "AsymmetricMHATokenToKVPoolHost._v_layout_dim",
+          "start_line": 1015
+        },
+        {
+          "end_line": 1023,
+          "name": "AsymmetricMHATokenToKVPoolHost._flat_page_unsupported",
+          "start_line": 1018
+        },
+        {
+          "end_line": 1084,
+          "name": "AsymmetricMHATokenToKVPoolHost.load_to_device_per_layer",
+          "start_line": 1025
+        },
+        {
+          "end_line": 1138,
+          "name": "AsymmetricMHATokenToKVPoolHost.backup_from_device_all_layer",
+          "start_line": 1086
+        },
+        {
+          "end_line": 1141,
+          "name": "AsymmetricMHATokenToKVPoolHost.get_data_page",
+          "start_line": 1140
+        },
+        {
+          "end_line": 1144,
+          "name": "AsymmetricMHATokenToKVPoolHost.get_dummy_flat_data_page",
+          "start_line": 1143
+        },
+        {
+          "end_line": 1147,
+          "name": "AsymmetricMHATokenToKVPoolHost.set_from_flat_data_page",
+          "start_line": 1146
+        },
+        {
+          "end_line": 1155,
+          "name": "AsymmetricMHATokenToKVPoolHost.get_split_heads_page_buffer_meta",
+          "start_line": 1149
+        },
+        {
+          "end_line": 1203,
+          "name": "AsymmetricMHATokenToKVPoolHost.get_page_buffer_meta",
+          "start_line": 1157
+        },
+        {
+          "end_line": 1230,
+          "name": "AsymmetricMHATokenToKVPoolHost.is_stride_page_aligned",
+          "start_line": 1205
+        },
+        {
+          "end_line": 1241,
+          "name": "get_mha_host_pool_cls",
+          "start_line": 1233
+        }
+      ],
+      "output": "A08-host-pool-mha.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/pool_host/mha.py",
+      "source_sha256": "49bb23e90a2ee6fe241f5f8a1ac861f9a7dce987ef2ea9bab236979d28041693"
+    },
+    {
+      "class_count": 8,
+      "classes": [
+        {
+          "end_line": 593,
+          "name": "MLATokenToKVPoolHost",
+          "start_line": 71
+        },
+        {
+          "end_line": 1163,
+          "name": "MambaPoolHost",
+          "start_line": 596
+        },
+        {
+          "end_line": 1252,
+          "name": "LogicalHostPool",
+          "start_line": 1169
+        },
+        {
+          "end_line": 1626,
+          "name": "DeepSeekV4PagedHostPool",
+          "start_line": 1255
+        },
+        {
+          "end_line": 1995,
+          "name": "DeepSeekV4StateHostPool",
+          "start_line": 1629
+        },
+        {
+          "end_line": 2016,
+          "name": "PoolEntry",
+          "start_line": 1998
+        },
+        {
+          "end_line": 2156,
+          "name": "HostPoolGroup",
+          "start_line": 2019
+        },
+        {
+          "end_line": 2533,
+          "name": "DSAIndexerPoolHost",
+          "start_line": 2159
+        }
+      ],
+      "function_count": 118,
+      "functions": [
+        {
+          "end_line": 117,
+          "name": "MLATokenToKVPoolHost.__init__",
+          "start_line": 74
+        },
+        {
+          "end_line": 125,
+          "name": "MLATokenToKVPoolHost.get_contiguous_buf_infos",
+          "start_line": 119
+        },
+        {
+          "end_line": 134,
+          "name": "MLATokenToKVPoolHost.get_size_per_token",
+          "start_line": 127
+        },
+        {
+          "end_line": 137,
+          "name": "MLATokenToKVPoolHost.get_ksize_per_token",
+          "start_line": 136
+        },
+        {
+          "end_line": 211,
+          "name": "MLATokenToKVPoolHost.init_kv_buffer",
+          "start_line": 139
+        },
+        {
+          "end_line": 242,
+          "name": "MLATokenToKVPoolHost._init_write_back_staging_buffers",
+          "start_line": 213
+        },
+        {
+          "end_line": 329,
+          "name": "MLATokenToKVPoolHost.load_to_device_per_layer",
+          "start_line": 244
+        },
+        {
+          "end_line": 388,
+          "name": "MLATokenToKVPoolHost._backup_from_device_per_layer",
+          "start_line": 331
+        },
+        {
+          "end_line": 479,
+          "name": "MLATokenToKVPoolHost.backup_from_device_all_layer",
+          "start_line": 390
+        },
+        {
+          "end_line": 493,
+          "name": "MLATokenToKVPoolHost.get_data_page",
+          "start_line": 481
+        },
+        {
+          "end_line": 506,
+          "name": "MLATokenToKVPoolHost.get_dummy_flat_data_page",
+          "start_line": 495
+        },
+        {
+          "end_line": 533,
+          "name": "MLATokenToKVPoolHost.set_from_flat_data_page",
+          "start_line": 508
+        },
+        {
+          "end_line": 573,
+          "name": "MLATokenToKVPoolHost.get_page_buffer_meta",
+          "start_line": 535
+        },
+        {
+          "end_line": 593,
+          "name": "MLATokenToKVPoolHost.is_stride_page_aligned",
+          "start_line": 575
+        },
+        {
+          "end_line": 694,
+          "name": "MambaPoolHost.__init__",
+          "start_line": 598
+        },
+        {
+          "end_line": 749,
+          "name": "MambaPoolHost.init_kv_buffer",
+          "start_line": 696
+        },
+        {
+          "end_line": 797,
+          "name": "MambaPoolHost._init_write_back_staging_buffers",
+          "start_line": 751
+        },
+        {
+          "end_line": 801,
+          "name": "MambaPoolHost.get_hybrid_pool_buffer",
+          "start_line": 799
+        },
+        {
+          "end_line": 811,
+          "name": "MambaPoolHost._iter_page_tensors",
+          "start_line": 803
+        },
+        {
+          "end_line": 815,
+          "name": "MambaPoolHost._flatten_tensor_bytes",
+          "start_line": 813
+        },
+        {
+          "end_line": 822,
+          "name": "MambaPoolHost.clear",
+          "start_line": 817
+        },
+        {
+          "end_line": 825,
+          "name": "MambaPoolHost.available_size",
+          "start_line": 824
+        },
+        {
+          "end_line": 836,
+          "name": "MambaPoolHost.alloc",
+          "start_line": 827
+        },
+        {
+          "end_line": 841,
+          "name": "MambaPoolHost.free",
+          "start_line": 838
+        },
+        {
+          "end_line": 849,
+          "name": "MambaPoolHost.get_size_per_token",
+          "start_line": 843
+        },
+        {
+          "end_line": 852,
+          "name": "MambaPoolHost.get_ksize_per_token",
+          "start_line": 851
+        },
+        {
+          "end_line": 858,
+          "name": "MambaPoolHost._item_size_per_index",
+          "start_line": 854
+        },
+        {
+          "end_line": 890,
+          "name": "MambaPoolHost._copy_tensor",
+          "start_line": 860
+        },
+        {
+          "end_line": 925,
+          "name": "MambaPoolHost._copy_tensor_pf_lf",
+          "start_line": 892
+        },
+        {
+          "end_line": 973,
+          "name": "MambaPoolHost._copy_tensor_all_layers_lf_pf",
+          "start_line": 927
+        },
+        {
+          "end_line": 1023,
+          "name": "MambaPoolHost.load_to_device_per_layer",
+          "start_line": 975
+        },
+        {
+          "end_line": 1073,
+          "name": "MambaPoolHost.backup_from_device_all_layer",
+          "start_line": 1025
+        },
+        {
+          "end_line": 1082,
+          "name": "MambaPoolHost.get_data_page",
+          "start_line": 1075
+        },
+        {
+          "end_line": 1090,
+          "name": "MambaPoolHost.get_dummy_flat_data_page",
+          "start_line": 1084
+        },
+        {
+          "end_line": 1104,
+          "name": "MambaPoolHost.set_from_flat_data_page",
+          "start_line": 1092
+        },
+        {
+          "end_line": 1163,
+          "name": "MambaPoolHost.get_page_buffer_meta",
+          "start_line": 1106
+        },
+        {
+          "end_line": 1195,
+          "name": "LogicalHostPool.__init__",
+          "start_line": 1176
+        },
+        {
+          "end_line": 1199,
+          "name": "LogicalHostPool.clear",
+          "start_line": 1197
+        },
+        {
+          "end_line": 1202,
+          "name": "LogicalHostPool.available_size",
+          "start_line": 1201
+        },
+        {
+          "end_line": 1215,
+          "name": "LogicalHostPool.alloc",
+          "start_line": 1204
+        },
+        {
+          "end_line": 1227,
+          "name": "LogicalHostPool.free",
+          "start_line": 1217
+        },
+        {
+          "end_line": 1232,
+          "name": "LogicalHostPool.backup_from_device_all_layer",
+          "start_line": 1229
+        },
+        {
+          "end_line": 1237,
+          "name": "LogicalHostPool.load_to_device_per_layer",
+          "start_line": 1234
+        },
+        {
+          "end_line": 1240,
+          "name": "LogicalHostPool.get_data_page",
+          "start_line": 1239
+        },
+        {
+          "end_line": 1243,
+          "name": "LogicalHostPool.get_dummy_flat_data_page",
+          "start_line": 1242
+        },
+        {
+          "end_line": 1246,
+          "name": "LogicalHostPool.set_from_flat_data_page",
+          "start_line": 1245
+        },
+        {
+          "end_line": 1249,
+          "name": "LogicalHostPool.get_page_buffer_meta",
+          "start_line": 1248
+        },
+        {
+          "end_line": 1252,
+          "name": "LogicalHostPool.get_ksize_per_token",
+          "start_line": 1251
+        },
+        {
+          "end_line": 1361,
+          "name": "DeepSeekV4PagedHostPool.__init__",
+          "start_line": 1258
+        },
+        {
+          "end_line": 1376,
+          "name": "DeepSeekV4PagedHostPool._init_write_back_staging_buffers",
+          "start_line": 1363
+        },
+        {
+          "end_line": 1383,
+          "name": "DeepSeekV4PagedHostPool.get_contiguous_buf_infos",
+          "start_line": 1378
+        },
+        {
+          "end_line": 1386,
+          "name": "DeepSeekV4PagedHostPool._to_page_indices",
+          "start_line": 1385
+        },
+        {
+          "end_line": 1398,
+          "name": "DeepSeekV4PagedHostPool._has_transfer_indices",
+          "start_line": 1388
+        },
+        {
+          "end_line": 1401,
+          "name": "DeepSeekV4PagedHostPool.get_size_per_token",
+          "start_line": 1400
+        },
+        {
+          "end_line": 1404,
+          "name": "DeepSeekV4PagedHostPool.get_ksize_per_token",
+          "start_line": 1403
+        },
+        {
+          "end_line": 1407,
+          "name": "DeepSeekV4PagedHostPool.init_kv_buffer",
+          "start_line": 1406
+        },
+        {
+          "end_line": 1410,
+          "name": "DeepSeekV4PagedHostPool.get_hybrid_pool_buffer",
+          "start_line": 1409
+        },
+        {
+          "end_line": 1413,
+          "name": "DeepSeekV4PagedHostPool.clear",
+          "start_line": 1412
+        },
+        {
+          "end_line": 1416,
+          "name": "DeepSeekV4PagedHostPool.available_size",
+          "start_line": 1415
+        },
+        {
+          "end_line": 1427,
+          "name": "DeepSeekV4PagedHostPool.alloc",
+          "start_line": 1418
+        },
+        {
+          "end_line": 1434,
+          "name": "DeepSeekV4PagedHostPool.free",
+          "start_line": 1429
+        },
+        {
+          "end_line": 1507,
+          "name": "DeepSeekV4PagedHostPool.backup_from_device_all_layer",
+          "start_line": 1436
+        },
+        {
+          "end_line": 1568,
+          "name": "DeepSeekV4PagedHostPool.load_to_device_per_layer",
+          "start_line": 1509
+        },
+        {
+          "end_line": 1580,
+          "name": "DeepSeekV4PagedHostPool.get_data_page",
+          "start_line": 1570
+        },
+        {
+          "end_line": 1588,
+          "name": "DeepSeekV4PagedHostPool.get_dummy_flat_data_page",
+          "start_line": 1582
+        },
+        {
+          "end_line": 1605,
+          "name": "DeepSeekV4PagedHostPool.set_from_flat_data_page",
+          "start_line": 1590
+        },
+        {
+          "end_line": 1626,
+          "name": "DeepSeekV4PagedHostPool.get_page_buffer_meta",
+          "start_line": 1607
+        },
+        {
+          "end_line": 1737,
+          "name": "DeepSeekV4StateHostPool.__init__",
+          "start_line": 1632
+        },
+        {
+          "end_line": 1770,
+          "name": "DeepSeekV4StateHostPool._init_device_page_views",
+          "start_line": 1739
+        },
+        {
+          "end_line": 1785,
+          "name": "DeepSeekV4StateHostPool._init_write_back_staging_buffers",
+          "start_line": 1772
+        },
+        {
+          "end_line": 1793,
+          "name": "DeepSeekV4StateHostPool._to_page_indices",
+          "start_line": 1787
+        },
+        {
+          "end_line": 1796,
+          "name": "DeepSeekV4StateHostPool.get_size_per_token",
+          "start_line": 1795
+        },
+        {
+          "end_line": 1799,
+          "name": "DeepSeekV4StateHostPool.get_ksize_per_token",
+          "start_line": 1798
+        },
+        {
+          "end_line": 1802,
+          "name": "DeepSeekV4StateHostPool.init_kv_buffer",
+          "start_line": 1801
+        },
+        {
+          "end_line": 1805,
+          "name": "DeepSeekV4StateHostPool.get_hybrid_pool_buffer",
+          "start_line": 1804
+        },
+        {
+          "end_line": 1808,
+          "name": "DeepSeekV4StateHostPool.clear",
+          "start_line": 1807
+        },
+        {
+          "end_line": 1813,
+          "name": "DeepSeekV4StateHostPool.available_size",
+          "start_line": 1810
+        },
+        {
+          "end_line": 1819,
+          "name": "DeepSeekV4StateHostPool.alloc",
+          "start_line": 1815
+        },
+        {
+          "end_line": 1825,
+          "name": "DeepSeekV4StateHostPool.free",
+          "start_line": 1821
+        },
+        {
+          "end_line": 1884,
+          "name": "DeepSeekV4StateHostPool.backup_from_device_all_layer",
+          "start_line": 1827
+        },
+        {
+          "end_line": 1931,
+          "name": "DeepSeekV4StateHostPool.load_to_device_per_layer",
+          "start_line": 1886
+        },
+        {
+          "end_line": 1943,
+          "name": "DeepSeekV4StateHostPool.get_data_page",
+          "start_line": 1933
+        },
+        {
+          "end_line": 1951,
+          "name": "DeepSeekV4StateHostPool.get_dummy_flat_data_page",
+          "start_line": 1945
+        },
+        {
+          "end_line": 1974,
+          "name": "DeepSeekV4StateHostPool.set_from_flat_data_page",
+          "start_line": 1953
+        },
+        {
+          "end_line": 1995,
+          "name": "DeepSeekV4StateHostPool.get_page_buffer_meta",
+          "start_line": 1976
+        },
+        {
+          "end_line": 2037,
+          "name": "HostPoolGroup.__init__",
+          "start_line": 2020
+        },
+        {
+          "end_line": 2041,
+          "name": "HostPoolGroup.kv_buffer",
+          "start_line": 2039
+        },
+        {
+          "end_line": 2045,
+          "name": "HostPoolGroup.size_per_token",
+          "start_line": 2043
+        },
+        {
+          "end_line": 2049,
+          "name": "HostPoolGroup.allocator",
+          "start_line": 2047
+        },
+        {
+          "end_line": 2053,
+          "name": "HostPoolGroup.dtype",
+          "start_line": 2051
+        },
+        {
+          "end_line": 2057,
+          "name": "HostPoolGroup.start_layer",
+          "start_line": 2055
+        },
+        {
+          "end_line": 2061,
+          "name": "HostPoolGroup.end_layer",
+          "start_line": 2059
+        },
+        {
+          "end_line": 2064,
+          "name": "HostPoolGroup.get_ksize_per_token",
+          "start_line": 2063
+        },
+        {
+          "end_line": 2067,
+          "name": "HostPoolGroup.get_pool",
+          "start_line": 2066
+        },
+        {
+          "end_line": 2070,
+          "name": "HostPoolGroup.get_page_buffer_meta",
+          "start_line": 2069
+        },
+        {
+          "end_line": 2074,
+          "name": "HostPoolGroup.clear",
+          "start_line": 2072
+        },
+        {
+          "end_line": 2077,
+          "name": "HostPoolGroup.available_size",
+          "start_line": 2076
+        },
+        {
+          "end_line": 2080,
+          "name": "HostPoolGroup.alloc",
+          "start_line": 2079
+        },
+        {
+          "end_line": 2083,
+          "name": "HostPoolGroup.free",
+          "start_line": 2082
+        },
+        {
+          "end_line": 2086,
+          "name": "HostPoolGroup.get_data_page",
+          "start_line": 2085
+        },
+        {
+          "end_line": 2089,
+          "name": "HostPoolGroup.get_dummy_flat_data_page",
+          "start_line": 2088
+        },
+        {
+          "end_line": 2092,
+          "name": "HostPoolGroup.set_from_flat_data_page",
+          "start_line": 2091
+        },
+        {
+          "end_line": 2129,
+          "name": "HostPoolGroup.load_to_device_per_layer",
+          "start_line": 2094
+        },
+        {
+          "end_line": 2156,
+          "name": "HostPoolGroup.backup_from_device_all_layer",
+          "start_line": 2131
+        },
+        {
+          "end_line": 2223,
+          "name": "DSAIndexerPoolHost.__init__",
+          "start_line": 2164
+        },
+        {
+          "end_line": 2228,
+          "name": "DSAIndexerPoolHost.get_size_per_token",
+          "start_line": 2225
+        },
+        {
+          "end_line": 2231,
+          "name": "DSAIndexerPoolHost.get_ksize_per_token",
+          "start_line": 2230
+        },
+        {
+          "end_line": 2270,
+          "name": "DSAIndexerPoolHost.init_kv_buffer",
+          "start_line": 2233
+        },
+        {
+          "end_line": 2292,
+          "name": "DSAIndexerPoolHost._init_write_back_staging_buffers",
+          "start_line": 2272
+        },
+        {
+          "end_line": 2295,
+          "name": "DSAIndexerPoolHost.get_hybrid_pool_buffer",
+          "start_line": 2294
+        },
+        {
+          "end_line": 2310,
+          "name": "DSAIndexerPoolHost._get_indexer_page_indices",
+          "start_line": 2297
+        },
+        {
+          "end_line": 2365,
+          "name": "DSAIndexerPoolHost.load_to_device_per_layer",
+          "start_line": 2312
+        },
+        {
+          "end_line": 2406,
+          "name": "DSAIndexerPoolHost._backup_from_device_per_layer",
+          "start_line": 2367
+        },
+        {
+          "end_line": 2475,
+          "name": "DSAIndexerPoolHost.backup_from_device_all_layer",
+          "start_line": 2408
+        },
+        {
+          "end_line": 2487,
+          "name": "DSAIndexerPoolHost.get_data_page",
+          "start_line": 2477
+        },
+        {
+          "end_line": 2495,
+          "name": "DSAIndexerPoolHost.get_dummy_flat_data_page",
+          "start_line": 2489
+        },
+        {
+          "end_line": 2517,
+          "name": "DSAIndexerPoolHost.set_from_flat_data_page",
+          "start_line": 2497
+        },
+        {
+          "end_line": 2533,
+          "name": "DSAIndexerPoolHost.get_page_buffer_meta",
+          "start_line": 2519
+        }
+      ],
+      "output": "A09-model-specific-host-pools.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/memory_pool_host.py",
+      "source_sha256": "aa1727c66a7775c9044ec618ab560efe00f9c54e84a942bd6de1f89d31681d47"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 71,
+          "name": "HiSparseHostPoolMixin",
+          "start_line": 11
+        }
+      ],
+      "function_count": 4,
+      "functions": [
+        {
+          "end_line": 13,
+          "name": "HiSparseHostPoolMixin._round_up_to_page_size",
+          "start_line": 12
+        },
+        {
+          "end_line": 16,
+          "name": "HiSparseHostPoolMixin.alloc_page",
+          "start_line": 15
+        },
+        {
+          "end_line": 57,
+          "name": "HiSparseHostPoolMixin.alloc_paged_token_slots",
+          "start_line": 18
+        },
+        {
+          "end_line": 71,
+          "name": "HiSparseHostPoolMixin.allocated_host_indices",
+          "start_line": 59
+        }
+      ],
+      "output": "A09b-hisparse-host.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/pool_host/hisparse.py",
+      "source_sha256": "0f94fd23d74613556ac5dbca59d8399fd3c5f6cbfc8758775bedb5fb5b8f9e01"
+    },
+    {
+      "class_count": 11,
+      "classes": [
+        {
+          "end_line": 40,
+          "name": "HiCacheStorageConfig",
+          "start_line": 26
+        },
+        {
+          "end_line": 46,
+          "name": "HiCacheStorageExtraInfo",
+          "start_line": 43
+        },
+        {
+          "end_line": 55,
+          "name": "PrefetchTimeoutConfig",
+          "start_line": 49
+        },
+        {
+          "end_line": 78,
+          "name": "PoolName",
+          "start_line": 58
+        },
+        {
+          "end_line": 89,
+          "name": "PoolHitPolicy",
+          "start_line": 81
+        },
+        {
+          "end_line": 107,
+          "name": "PoolTransfer",
+          "start_line": 92
+        },
+        {
+          "end_line": 116,
+          "name": "SidecarPoolSpec",
+          "start_line": 110
+        },
+        {
+          "end_line": 138,
+          "name": "PoolTransferResult",
+          "start_line": 119
+        },
+        {
+          "end_line": 317,
+          "name": "HiCacheStorage",
+          "start_line": 141
+        },
+        {
+          "end_line": 349,
+          "name": "MetadataCache",
+          "start_line": 320
+        },
+        {
+          "end_line": 716,
+          "name": "HiCacheFile",
+          "start_line": 352
+        }
+      ],
+      "function_count": 44,
+      "functions": [
+        {
+          "end_line": 78,
+          "name": "PoolName.__str__",
+          "start_line": 77
+        },
+        {
+          "end_line": 128,
+          "name": "PoolTransferResult.empty",
+          "start_line": 126
+        },
+        {
+          "end_line": 132,
+          "name": "PoolTransferResult.update_kv_hit_pages",
+          "start_line": 130
+        },
+        {
+          "end_line": 138,
+          "name": "PoolTransferResult.update_extra_pool_hit_pages",
+          "start_line": 134
+        },
+        {
+          "end_line": 149,
+          "name": "HiCacheStorage.register_mem_pool_host",
+          "start_line": 148
+        },
+        {
+          "end_line": 154,
+          "name": "HiCacheStorage.register_mem_host_pool_v2",
+          "start_line": 151
+        },
+        {
+          "end_line": 187,
+          "name": "HiCacheStorage.batch_exists_v2",
+          "start_line": 156
+        },
+        {
+          "end_line": 198,
+          "name": "HiCacheStorage.batch_get_v2",
+          "start_line": 189
+        },
+        {
+          "end_line": 209,
+          "name": "HiCacheStorage.batch_set_v2",
+          "start_line": 200
+        },
+        {
+          "end_line": 221,
+          "name": "HiCacheStorage.batch_get_v1",
+          "start_line": 211
+        },
+        {
+          "end_line": 233,
+          "name": "HiCacheStorage.batch_set_v1",
+          "start_line": 223
+        },
+        {
+          "end_line": 246,
+          "name": "HiCacheStorage.get",
+          "start_line": 235
+        },
+        {
+          "end_line": 260,
+          "name": "HiCacheStorage.batch_get",
+          "start_line": 249
+        },
+        {
+          "end_line": 274,
+          "name": "HiCacheStorage.set",
+          "start_line": 262
+        },
+        {
+          "end_line": 289,
+          "name": "HiCacheStorage.batch_set",
+          "start_line": 277
+        },
+        {
+          "end_line": 297,
+          "name": "HiCacheStorage.exists",
+          "start_line": 291
+        },
+        {
+          "end_line": 311,
+          "name": "HiCacheStorage.batch_exists",
+          "start_line": 300
+        },
+        {
+          "end_line": 314,
+          "name": "HiCacheStorage.clear",
+          "start_line": 313
+        },
+        {
+          "end_line": 317,
+          "name": "HiCacheStorage.get_stats",
+          "start_line": 316
+        },
+        {
+          "end_line": 325,
+          "name": "MetadataCache.__init__",
+          "start_line": 321
+        },
+        {
+          "end_line": 330,
+          "name": "MetadataCache.add",
+          "start_line": 327
+        },
+        {
+          "end_line": 334,
+          "name": "MetadataCache.remove",
+          "start_line": 332
+        },
+        {
+          "end_line": 345,
+          "name": "MetadataCache.contains",
+          "start_line": 336
+        },
+        {
+          "end_line": 349,
+          "name": "MetadataCache.clear",
+          "start_line": 347
+        },
+        {
+          "end_line": 424,
+          "name": "HiCacheFile.__init__",
+          "start_line": 354
+        },
+        {
+          "end_line": 427,
+          "name": "HiCacheFile._get_suffixed_key",
+          "start_line": 426
+        },
+        {
+          "end_line": 432,
+          "name": "HiCacheFile._get_component_key",
+          "start_line": 429
+        },
+        {
+          "end_line": 439,
+          "name": "HiCacheFile._get_component_path",
+          "start_line": 434
+        },
+        {
+          "end_line": 452,
+          "name": "HiCacheFile._scan_existing_files_to_metadata_cache",
+          "start_line": 441
+        },
+        {
+          "end_line": 476,
+          "name": "HiCacheFile.get",
+          "start_line": 454
+        },
+        {
+          "end_line": 489,
+          "name": "HiCacheFile.batch_get",
+          "start_line": 478
+        },
+        {
+          "end_line": 538,
+          "name": "HiCacheFile.set",
+          "start_line": 491
+        },
+        {
+          "end_line": 550,
+          "name": "HiCacheFile.batch_set",
+          "start_line": 540
+        },
+        {
+          "end_line": 561,
+          "name": "HiCacheFile.exists",
+          "start_line": 552
+        },
+        {
+          "end_line": 591,
+          "name": "HiCacheFile._collect_existing_component_keys",
+          "start_line": 563
+        },
+        {
+          "end_line": 641,
+          "name": "HiCacheFile.batch_exists_v2",
+          "start_line": 593
+        },
+        {
+          "end_line": 604,
+          "name": "HiCacheFile.batch_exists_v2.<local>.has_component",
+          "start_line": 601
+        },
+        {
+          "end_line": 644,
+          "name": "HiCacheFile._log_key",
+          "start_line": 643
+        },
+        {
+          "end_line": 653,
+          "name": "HiCacheFile._read_page",
+          "start_line": 646
+        },
+        {
+          "end_line": 661,
+          "name": "HiCacheFile._write_page",
+          "start_line": 655
+        },
+        {
+          "end_line": 687,
+          "name": "HiCacheFile._batch_io_v2",
+          "start_line": 663
+        },
+        {
+          "end_line": 694,
+          "name": "HiCacheFile.batch_get_v2",
+          "start_line": 689
+        },
+        {
+          "end_line": 701,
+          "name": "HiCacheFile.batch_set_v2",
+          "start_line": 696
+        },
+        {
+          "end_line": 716,
+          "name": "HiCacheFile.clear",
+          "start_line": 703
+        }
+      ],
+      "output": "A10-storage-contract.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/hicache_storage.py",
+      "source_sha256": "bb55a1503578fc18f07775917b31e753cb3d7884726c9cc6ea80066e6c4d3f6a"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 191,
+          "name": "StorageBackendFactory",
+          "start_line": 16
+        }
+      ],
+      "function_count": 6,
+      "functions": [
+        {
+          "end_line": 41,
+          "name": "StorageBackendFactory._load_backend_class",
+          "start_line": 21
+        },
+        {
+          "end_line": 63,
+          "name": "StorageBackendFactory.register_backend",
+          "start_line": 43
+        },
+        {
+          "end_line": 57,
+          "name": "StorageBackendFactory.register_backend.<local>.loader",
+          "start_line": 55
+        },
+        {
+          "end_line": 111,
+          "name": "StorageBackendFactory.create_backend",
+          "start_line": 65
+        },
+        {
+          "end_line": 150,
+          "name": "StorageBackendFactory._create_dynamic_backend",
+          "start_line": 113
+        },
+        {
+          "end_line": 191,
+          "name": "StorageBackendFactory._create_builtin_backend",
+          "start_line": 152
+        }
+      ],
+      "output": "A11-storage-factory.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/storage/backend_factory.py",
+      "source_sha256": "6c09a564740dcd31b608d378c18113485fb6f77e986f7bf3b7c433c9826825d7"
+    },
+    {
+      "class_count": 0,
+      "classes": [],
+      "function_count": 11,
+      "functions": [
+        {
+          "end_line": 36,
+          "name": "_jit_hicache_module",
+          "start_line": 16
+        },
+        {
+          "end_line": 65,
+          "name": "_jit_hicache_staged_module",
+          "start_line": 39
+        },
+        {
+          "end_line": 89,
+          "name": "can_use_hicache_jit_kernel",
+          "start_line": 68
+        },
+        {
+          "end_line": 113,
+          "name": "can_use_write_back_jit_kernel",
+          "start_line": 92
+        },
+        {
+          "end_line": 124,
+          "name": "_default_unroll",
+          "start_line": 116
+        },
+        {
+          "end_line": 160,
+          "name": "transfer_hicache_one_layer",
+          "start_line": 127
+        },
+        {
+          "end_line": 198,
+          "name": "transfer_hicache_all_layer",
+          "start_line": 163
+        },
+        {
+          "end_line": 227,
+          "name": "transfer_hicache_one_layer_mla",
+          "start_line": 201
+        },
+        {
+          "end_line": 260,
+          "name": "transfer_hicache_all_layer_mla",
+          "start_line": 230
+        },
+        {
+          "end_line": 309,
+          "name": "transfer_hicache_all_layer_staged_lf_pf",
+          "start_line": 263
+        },
+        {
+          "end_line": 350,
+          "name": "transfer_hicache_all_layer_mla_staged_lf_pf",
+          "start_line": 312
+        }
+      ],
+      "output": "A12-jit-python.md",
+      "scope": "all",
+      "source": "python/sglang/jit_kernel/hicache.py",
+      "source_sha256": "b9c2a82dccdacc57d27596881c347c2c8407f21afc91b6072a9756f43b28484a"
+    },
+    {
+      "class_count": 0,
+      "classes": [],
+      "function_count": 4,
+      "functions": [
+        {
+          "end_line": 16,
+          "name": "_cpu_supports_avx2",
+          "start_line": 9
+        },
+        {
+          "end_line": 42,
+          "name": "_load_native_hash_module",
+          "start_line": 19
+        },
+        {
+          "end_line": 77,
+          "name": "_native_hash_input",
+          "start_line": 45
+        },
+        {
+          "end_line": 86,
+          "name": "get_native_hash",
+          "start_line": 80
+        }
+      ],
+      "output": "A12b-native-hash-loader.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/cpp_utils/native_hash.py",
+      "source_sha256": "8ae66bf8147fd0daa518a1519028a5ce3504cdf5616341cb348a71b873251924"
+    },
+    {
+      "class_count": 0,
+      "classes": [],
+      "function_count": 5,
+      "functions": [
+        {
+          "end_line": 74,
+          "name": "get_eviction_strategy",
+          "start_line": 66
+        },
+        {
+          "end_line": 112,
+          "name": "get_hash_str",
+          "start_line": 106
+        },
+        {
+          "end_line": 123,
+          "name": "hash_str_to_int64",
+          "start_line": 115
+        },
+        {
+          "end_line": 135,
+          "name": "compute_node_hash_values",
+          "start_line": 126
+        },
+        {
+          "end_line": 162,
+          "name": "split_node_hash_value",
+          "start_line": 138
+        }
+      ],
+      "output": "A12c-hash-utils.md",
+      "scope": "selected",
+      "source": "python/sglang/srt/mem_cache/utils.py",
+      "source_sha256": "559cdd2895539882bba4d9b1ee95cbe4d027f9830056626a3f673e57589d2c37"
+    },
+    {
+      "class_count": 6,
+      "classes": [
+        {
+          "end_line": 134,
+          "name": "UnifiedTreeNode",
+          "start_line": 79
+        },
+        {
+          "end_line": 267,
+          "name": "UnifiedLRUList",
+          "start_line": 137
+        },
+        {
+          "end_line": 284,
+          "name": "_OngoingWriteThrough",
+          "start_line": 279
+        },
+        {
+          "end_line": 292,
+          "name": "_OngoingLoadBack",
+          "start_line": 287
+        },
+        {
+          "end_line": 303,
+          "name": "_OngoingPrefetch",
+          "start_line": 295
+        },
+        {
+          "end_line": 2937,
+          "name": "UnifiedRadixCache",
+          "start_line": 306
+        }
+      ],
+      "function_count": 128,
+      "functions": [
+        {
+          "end_line": 104,
+          "name": "UnifiedTreeNode.__init__",
+          "start_line": 82
+        },
+        {
+          "end_line": 107,
+          "name": "UnifiedTreeNode.component",
+          "start_line": 106
+        },
+        {
+          "end_line": 112,
+          "name": "UnifiedTreeNode.backuped",
+          "start_line": 109
+        },
+        {
+          "end_line": 120,
+          "name": "UnifiedTreeNode.evicted",
+          "start_line": 114
+        },
+        {
+          "end_line": 123,
+          "name": "UnifiedTreeNode.__lt__",
+          "start_line": 122
+        },
+        {
+          "end_line": 128,
+          "name": "UnifiedTreeNode.get_last_hash_value",
+          "start_line": 125
+        },
+        {
+          "end_line": 134,
+          "name": "UnifiedTreeNode.get_prefix_hash_values",
+          "start_line": 130
+        },
+        {
+          "end_line": 152,
+          "name": "UnifiedLRUList.__init__",
+          "start_line": 138
+        },
+        {
+          "end_line": 159,
+          "name": "UnifiedLRUList._add_node_after",
+          "start_line": 154
+        },
+        {
+          "end_line": 162,
+          "name": "UnifiedLRUList._add_node",
+          "start_line": 161
+        },
+        {
+          "end_line": 170,
+          "name": "UnifiedLRUList._remove_node",
+          "start_line": 164
+        },
+        {
+          "end_line": 175,
+          "name": "UnifiedLRUList.insert_mru",
+          "start_line": 172
+        },
+        {
+          "end_line": 180,
+          "name": "UnifiedLRUList.remove_node",
+          "start_line": 177
+        },
+        {
+          "end_line": 185,
+          "name": "UnifiedLRUList.reset_node_mru",
+          "start_line": 182
+        },
+        {
+          "end_line": 200,
+          "name": "UnifiedLRUList.reset_node_and_parents_mru",
+          "start_line": 187
+        },
+        {
+          "end_line": 218,
+          "name": "UnifiedLRUList.reset_node_and_window_ancestors_mru",
+          "start_line": 202
+        },
+        {
+          "end_line": 221,
+          "name": "UnifiedLRUList.in_list",
+          "start_line": 220
+        },
+        {
+          "end_line": 233,
+          "name": "UnifiedLRUList.get_prev_no_lock",
+          "start_line": 223
+        },
+        {
+          "end_line": 245,
+          "name": "UnifiedLRUList.get_prev_leaf_no_lock",
+          "start_line": 235
+        },
+        {
+          "end_line": 258,
+          "name": "UnifiedLRUList.get_prev_no_host_lock",
+          "start_line": 247
+        },
+        {
+          "end_line": 261,
+          "name": "UnifiedLRUList.get_lru_no_lock",
+          "start_line": 260
+        },
+        {
+          "end_line": 264,
+          "name": "UnifiedLRUList.get_leaf_lru_no_lock",
+          "start_line": 263
+        },
+        {
+          "end_line": 267,
+          "name": "UnifiedLRUList.get_lru_no_host_lock",
+          "start_line": 266
+        },
+        {
+          "end_line": 379,
+          "name": "UnifiedRadixCache.__init__",
+          "start_line": 307
+        },
+        {
+          "end_line": 388,
+          "name": "UnifiedRadixCache._all_reduce_attn_groups",
+          "start_line": 381
+        },
+        {
+          "end_line": 397,
+          "name": "UnifiedRadixCache._barrier_attn_groups",
+          "start_line": 390
+        },
+        {
+          "end_line": 409,
+          "name": "UnifiedRadixCache._drain_async_work",
+          "start_line": 399
+        },
+        {
+          "end_line": 422,
+          "name": "UnifiedRadixCache._all_reduce",
+          "start_line": 411
+        },
+        {
+          "end_line": 445,
+          "name": "UnifiedRadixCache._pp_sync",
+          "start_line": 424
+        },
+        {
+          "end_line": 448,
+          "name": "UnifiedRadixCache.reset",
+          "start_line": 447
+        },
+        {
+          "end_line": 495,
+          "name": "UnifiedRadixCache._reset_full",
+          "start_line": 450
+        },
+        {
+          "end_line": 565,
+          "name": "UnifiedRadixCache.init_hicache",
+          "start_line": 497
+        },
+        {
+          "end_line": 568,
+          "name": "UnifiedRadixCache.register_sidecar_pool",
+          "start_line": 567
+        },
+        {
+          "end_line": 595,
+          "name": "UnifiedRadixCache.match_prefix",
+          "start_line": 570
+        },
+        {
+          "end_line": 611,
+          "name": "UnifiedRadixCache.insert",
+          "start_line": 597
+        },
+        {
+          "end_line": 633,
+          "name": "UnifiedRadixCache.evict",
+          "start_line": 613
+        },
+        {
+          "end_line": 646,
+          "name": "UnifiedRadixCache.inc_lock_ref",
+          "start_line": 635
+        },
+        {
+          "end_line": 666,
+          "name": "UnifiedRadixCache.dec_lock_ref",
+          "start_line": 648
+        },
+        {
+          "end_line": 688,
+          "name": "UnifiedRadixCache.dec_swa_lock_only",
+          "start_line": 668
+        },
+        {
+          "end_line": 700,
+          "name": "UnifiedRadixCache.inc_host_lock_ref",
+          "start_line": 690
+        },
+        {
+          "end_line": 711,
+          "name": "UnifiedRadixCache.dec_host_lock_ref",
+          "start_line": 702
+        },
+        {
+          "end_line": 786,
+          "name": "UnifiedRadixCache.cache_finished_req",
+          "start_line": 713
+        },
+        {
+          "end_line": 890,
+          "name": "UnifiedRadixCache.cache_unfinished_req",
+          "start_line": 788
+        },
+        {
+          "end_line": 969,
+          "name": "UnifiedRadixCache._match_prefix_helper",
+          "start_line": 894
+        },
+        {
+          "end_line": 923,
+          "name": "UnifiedRadixCache._match_prefix_helper.<local>._all_valid",
+          "start_line": 922
+        },
+        {
+          "end_line": 939,
+          "name": "UnifiedRadixCache._match_prefix_helper.<local>._update_best_if_valid",
+          "start_line": 925
+        },
+        {
+          "end_line": 1020,
+          "name": "UnifiedRadixCache._match_post_processor",
+          "start_line": 971
+        },
+        {
+          "end_line": 1057,
+          "name": "UnifiedRadixCache._split_node",
+          "start_line": 1022
+        },
+        {
+          "end_line": 1065,
+          "name": "UnifiedRadixCache._touch_node",
+          "start_line": 1059
+        },
+        {
+          "end_line": 1086,
+          "name": "UnifiedRadixCache._add_new_node",
+          "start_line": 1067
+        },
+        {
+          "end_line": 1102,
+          "name": "UnifiedRadixCache._unevict_node_on_insert",
+          "start_line": 1088
+        },
+        {
+          "end_line": 1202,
+          "name": "UnifiedRadixCache._insert_helper",
+          "start_line": 1104
+        },
+        {
+          "end_line": 1252,
+          "name": "UnifiedRadixCache._insert_helper_host",
+          "start_line": 1204
+        },
+        {
+          "end_line": 1306,
+          "name": "UnifiedRadixCache._cascade_evict",
+          "start_line": 1256
+        },
+        {
+          "end_line": 1311,
+          "name": "UnifiedRadixCache._remove_leaf_from_parent",
+          "start_line": 1308
+        },
+        {
+          "end_line": 1337,
+          "name": "UnifiedRadixCache._evict_component_and_detach_lru",
+          "start_line": 1313
+        },
+        {
+          "end_line": 1386,
+          "name": "UnifiedRadixCache._iteratively_delete_tombstone_leaf",
+          "start_line": 1339
+        },
+        {
+          "end_line": 1406,
+          "name": "UnifiedRadixCache._for_each_component_lru",
+          "start_line": 1388
+        },
+        {
+          "end_line": 1416,
+          "name": "UnifiedRadixCache.evict_host",
+          "start_line": 1408
+        },
+        {
+          "end_line": 1434,
+          "name": "UnifiedRadixCache._is_device_leaf",
+          "start_line": 1418
+        },
+        {
+          "end_line": 1449,
+          "name": "UnifiedRadixCache._is_host_leaf",
+          "start_line": 1436
+        },
+        {
+          "end_line": 1461,
+          "name": "UnifiedRadixCache._update_evictable_leaf_sets",
+          "start_line": 1451
+        },
+        {
+          "end_line": 1479,
+          "name": "UnifiedRadixCache._evict_to_host",
+          "start_line": 1463
+        },
+        {
+          "end_line": 1517,
+          "name": "UnifiedRadixCache._evict_device_leaf",
+          "start_line": 1481
+        },
+        {
+          "end_line": 1535,
+          "name": "UnifiedRadixCache._evict_host_leaf",
+          "start_line": 1519
+        },
+        {
+          "end_line": 1601,
+          "name": "UnifiedRadixCache.write_backup",
+          "start_line": 1539
+        },
+        {
+          "end_line": 1611,
+          "name": "UnifiedRadixCache._track_write_through_node",
+          "start_line": 1603
+        },
+        {
+          "end_line": 1643,
+          "name": "UnifiedRadixCache._replace_pending_write_through_node",
+          "start_line": 1613
+        },
+        {
+          "end_line": 1657,
+          "name": "UnifiedRadixCache._finish_write_through_ack",
+          "start_line": 1645
+        },
+        {
+          "end_line": 1760,
+          "name": "UnifiedRadixCache.load_back",
+          "start_line": 1659
+        },
+        {
+          "end_line": 1807,
+          "name": "UnifiedRadixCache._build_sidecar_transfers",
+          "start_line": 1762
+        },
+        {
+          "end_line": 1824,
+          "name": "UnifiedRadixCache._inc_hit_count",
+          "start_line": 1809
+        },
+        {
+          "end_line": 1870,
+          "name": "UnifiedRadixCache.write_backup_storage",
+          "start_line": 1826
+        },
+        {
+          "end_line": 1963,
+          "name": "UnifiedRadixCache.prefetch_from_storage",
+          "start_line": 1872
+        },
+        {
+          "end_line": 1970,
+          "name": "UnifiedRadixCache._prefetch_timeout_check_linear_func",
+          "start_line": 1965
+        },
+        {
+          "end_line": 2006,
+          "name": "UnifiedRadixCache.can_terminate_prefetch",
+          "start_line": 1972
+        },
+        {
+          "end_line": 2084,
+          "name": "UnifiedRadixCache.check_prefetch_progress",
+          "start_line": 2008
+        },
+        {
+          "end_line": 2092,
+          "name": "UnifiedRadixCache.terminate_prefetch",
+          "start_line": 2086
+        },
+        {
+          "end_line": 2095,
+          "name": "UnifiedRadixCache.pop_prefetch_loaded_tokens",
+          "start_line": 2094
+        },
+        {
+          "end_line": 2121,
+          "name": "UnifiedRadixCache.release_aborted_request",
+          "start_line": 2097
+        },
+        {
+          "end_line": 2218,
+          "name": "UnifiedRadixCache._drain_storage_control_queues_impl",
+          "start_line": 2123
+        },
+        {
+          "end_line": 2141,
+          "name": "UnifiedRadixCache._drain_storage_control_queues_impl.<local>._drain_queue",
+          "start_line": 2133
+        },
+        {
+          "end_line": 2165,
+          "name": "UnifiedRadixCache._drain_storage_control_queues_impl.<local>._drain_revoke",
+          "start_line": 2143
+        },
+        {
+          "end_line": 2183,
+          "name": "UnifiedRadixCache._drain_storage_control_queues_impl.<local>._drain_backup",
+          "start_line": 2167
+        },
+        {
+          "end_line": 2193,
+          "name": "UnifiedRadixCache._drain_storage_control_queues_impl.<local>._drain_release",
+          "start_line": 2185
+        },
+        {
+          "end_line": 2213,
+          "name": "UnifiedRadixCache._drain_storage_control_queues_impl.<local>._drain_extra_release",
+          "start_line": 2195
+        },
+        {
+          "end_line": 2250,
+          "name": "UnifiedRadixCache.drain_storage_control_queues",
+          "start_line": 2220
+        },
+        {
+          "end_line": 2307,
+          "name": "UnifiedRadixCache._apply_storage_runtime_config",
+          "start_line": 2252
+        },
+        {
+          "end_line": 2321,
+          "name": "UnifiedRadixCache.attach_storage_backend",
+          "start_line": 2309
+        },
+        {
+          "end_line": 2328,
+          "name": "UnifiedRadixCache.detach_storage_backend",
+          "start_line": 2323
+        },
+        {
+          "end_line": 2338,
+          "name": "UnifiedRadixCache.clear_storage_backend",
+          "start_line": 2330
+        },
+        {
+          "end_line": 2379,
+          "name": "UnifiedRadixCache.writing_check",
+          "start_line": 2342
+        },
+        {
+          "end_line": 2405,
+          "name": "UnifiedRadixCache.loading_check",
+          "start_line": 2381
+        },
+        {
+          "end_line": 2460,
+          "name": "UnifiedRadixCache.init_load_back",
+          "start_line": 2409
+        },
+        {
+          "end_line": 2432,
+          "name": "UnifiedRadixCache.init_load_back.<local>._collect_new_prefix_indices",
+          "start_line": 2421
+        },
+        {
+          "end_line": 2473,
+          "name": "UnifiedRadixCache.check_hicache_events",
+          "start_line": 2462
+        },
+        {
+          "end_line": 2477,
+          "name": "UnifiedRadixCache.flush_write_through_acks",
+          "start_line": 2475
+        },
+        {
+          "end_line": 2483,
+          "name": "UnifiedRadixCache.ready_to_load_host_cache",
+          "start_line": 2479
+        },
+        {
+          "end_line": 2492,
+          "name": "UnifiedRadixCache.sliding_window_size",
+          "start_line": 2489
+        },
+        {
+          "end_line": 2509,
+          "name": "UnifiedRadixCache.swa_reprefill_tail_tokens",
+          "start_line": 2494
+        },
+        {
+          "end_line": 2512,
+          "name": "UnifiedRadixCache.supports_swa",
+          "start_line": 2511
+        },
+        {
+          "end_line": 2515,
+          "name": "UnifiedRadixCache.supports_mamba",
+          "start_line": 2514
+        },
+        {
+          "end_line": 2520,
+          "name": "UnifiedRadixCache.supports_streaming_session",
+          "start_line": 2519
+        },
+        {
+          "end_line": 2523,
+          "name": "UnifiedRadixCache.release_session",
+          "start_line": 2522
+        },
+        {
+          "end_line": 2526,
+          "name": "UnifiedRadixCache.session_held_tokens",
+          "start_line": 2525
+        },
+        {
+          "end_line": 2529,
+          "name": "UnifiedRadixCache.session_held_full_tokens",
+          "start_line": 2528
+        },
+        {
+          "end_line": 2532,
+          "name": "UnifiedRadixCache.session_held_swa_tokens",
+          "start_line": 2531
+        },
+        {
+          "end_line": 2535,
+          "name": "UnifiedRadixCache.session_held_req_count",
+          "start_line": 2534
+        },
+        {
+          "end_line": 2538,
+          "name": "UnifiedRadixCache.session_held_mamba_slots",
+          "start_line": 2537
+        },
+        {
+          "end_line": 2541,
+          "name": "UnifiedRadixCache.evictable_size",
+          "start_line": 2540
+        },
+        {
+          "end_line": 2544,
+          "name": "UnifiedRadixCache.protected_size",
+          "start_line": 2543
+        },
+        {
+          "end_line": 2547,
+          "name": "UnifiedRadixCache.full_evictable_size",
+          "start_line": 2546
+        },
+        {
+          "end_line": 2550,
+          "name": "UnifiedRadixCache.full_protected_size",
+          "start_line": 2549
+        },
+        {
+          "end_line": 2553,
+          "name": "UnifiedRadixCache.swa_evictable_size",
+          "start_line": 2552
+        },
+        {
+          "end_line": 2556,
+          "name": "UnifiedRadixCache.mamba_evictable_size",
+          "start_line": 2555
+        },
+        {
+          "end_line": 2559,
+          "name": "UnifiedRadixCache.swa_protected_size",
+          "start_line": 2558
+        },
+        {
+          "end_line": 2562,
+          "name": "UnifiedRadixCache.mamba_protected_size",
+          "start_line": 2561
+        },
+        {
+          "end_line": 2581,
+          "name": "UnifiedRadixCache.total_size",
+          "start_line": 2564
+        },
+        {
+          "end_line": 2596,
+          "name": "UnifiedRadixCache.all_values_flatten",
+          "start_line": 2583
+        },
+        {
+          "end_line": 2591,
+          "name": "UnifiedRadixCache.all_values_flatten.<local>._dfs",
+          "start_line": 2586
+        },
+        {
+          "end_line": 2616,
+          "name": "UnifiedRadixCache._all_component_values_flatten",
+          "start_line": 2598
+        },
+        {
+          "end_line": 2611,
+          "name": "UnifiedRadixCache._all_component_values_flatten.<local>._dfs",
+          "start_line": 2606
+        },
+        {
+          "end_line": 2619,
+          "name": "UnifiedRadixCache.all_mamba_values_flatten",
+          "start_line": 2618
+        },
+        {
+          "end_line": 2645,
+          "name": "UnifiedRadixCache.available_and_evictable_str",
+          "start_line": 2621
+        },
+        {
+          "end_line": 2654,
+          "name": "UnifiedRadixCache._collect_all_nodes",
+          "start_line": 2647
+        },
+        {
+          "end_line": 2886,
+          "name": "UnifiedRadixCache.sanity_check",
+          "start_line": 2656
+        },
+        {
+          "end_line": 2919,
+          "name": "UnifiedRadixCache._check_lru_linked_list",
+          "start_line": 2888
+        },
+        {
+          "end_line": 2937,
+          "name": "UnifiedRadixCache.pretty_print",
+          "start_line": 2921
+        }
+      ],
+      "output": "A13-unified-radix-cache.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/unified_radix_cache.py",
+      "source_sha256": "fe373b9e820a23c7ea8ff886d9afc57eed08c6686b91ff239dbc71af91c14fd6"
+    },
+    {
+      "class_count": 6,
+      "classes": [
+        {
+          "end_line": 51,
+          "name": "ComponentType",
+          "start_line": 31
+        },
+        {
+          "end_line": 67,
+          "name": "ComponentData",
+          "start_line": 61
+        },
+        {
+          "end_line": 75,
+          "name": "EvictLayer",
+          "start_line": 70
+        },
+        {
+          "end_line": 83,
+          "name": "CacheTransferPhase",
+          "start_line": 78
+        },
+        {
+          "end_line": 90,
+          "name": "LRURefreshPhase",
+          "start_line": 86
+        },
+        {
+          "end_line": 415,
+          "name": "TreeComponent",
+          "start_line": 106
+        }
+      ],
+      "function_count": 27,
+      "functions": [
+        {
+          "end_line": 39,
+          "name": "ComponentType.__str__",
+          "start_line": 38
+        },
+        {
+          "end_line": 43,
+          "name": "ComponentType.is_full",
+          "start_line": 41
+        },
+        {
+          "end_line": 47,
+          "name": "ComponentType.is_swa",
+          "start_line": 45
+        },
+        {
+          "end_line": 51,
+          "name": "ComponentType.is_mamba",
+          "start_line": 49
+        },
+        {
+          "end_line": 97,
+          "name": "get_and_increase_time_counter",
+          "start_line": 93
+        },
+        {
+          "end_line": 103,
+          "name": "next_component_uuid",
+          "start_line": 100
+        },
+        {
+          "end_line": 108,
+          "name": "TreeComponent.__init__",
+          "start_line": 107
+        },
+        {
+          "end_line": 119,
+          "name": "TreeComponent.node_has_component_data",
+          "start_line": 113
+        },
+        {
+          "end_line": 123,
+          "name": "TreeComponent.value_len",
+          "start_line": 121
+        },
+        {
+          "end_line": 146,
+          "name": "TreeComponent.refresh_lru",
+          "start_line": 125
+        },
+        {
+          "end_line": 161,
+          "name": "TreeComponent.create_match_validator",
+          "start_line": 148
+        },
+        {
+          "end_line": 175,
+          "name": "TreeComponent.finalize_match_result",
+          "start_line": 163
+        },
+        {
+          "end_line": 191,
+          "name": "TreeComponent.update_component_on_insert_overlap",
+          "start_line": 177
+        },
+        {
+          "end_line": 204,
+          "name": "TreeComponent.recover_after_unevict",
+          "start_line": 193
+        },
+        {
+          "end_line": 225,
+          "name": "TreeComponent.commit_insert_component_data",
+          "start_line": 206
+        },
+        {
+          "end_line": 239,
+          "name": "TreeComponent.redistribute_on_node_split",
+          "start_line": 227
+        },
+        {
+          "end_line": 258,
+          "name": "TreeComponent.evict_component",
+          "start_line": 241
+        },
+        {
+          "end_line": 285,
+          "name": "TreeComponent.eviction_priority",
+          "start_line": 260
+        },
+        {
+          "end_line": 298,
+          "name": "TreeComponent.drive_eviction",
+          "start_line": 287
+        },
+        {
+          "end_line": 321,
+          "name": "TreeComponent.acquire_component_lock",
+          "start_line": 300
+        },
+        {
+          "end_line": 340,
+          "name": "TreeComponent.release_component_lock",
+          "start_line": 323
+        },
+        {
+          "end_line": 357,
+          "name": "TreeComponent.prepare_for_caching_req",
+          "start_line": 342
+        },
+        {
+          "end_line": 374,
+          "name": "TreeComponent.cleanup_after_caching_req",
+          "start_line": 359
+        },
+        {
+          "end_line": 379,
+          "name": "TreeComponent.free_out_of_window_slots",
+          "start_line": 376
+        },
+        {
+          "end_line": 395,
+          "name": "TreeComponent.build_hicache_transfers",
+          "start_line": 383
+        },
+        {
+          "end_line": 407,
+          "name": "TreeComponent.commit_hicache_transfer",
+          "start_line": 397
+        },
+        {
+          "end_line": 415,
+          "name": "TreeComponent.drive_host_eviction",
+          "start_line": 409
+        }
+      ],
+      "output": "A13b-tree-component.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/unified_cache_components/tree_component.py",
+      "source_sha256": "94534ec02b91667bc99d13695f5c3bfc44ad41ab71d4c6175ad9ca9940b595d9"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 333,
+          "name": "FullComponent",
+          "start_line": 35
+        }
+      ],
+      "function_count": 12,
+      "functions": [
+        {
+          "end_line": 48,
+          "name": "FullComponent.__init__",
+          "start_line": 38
+        },
+        {
+          "end_line": 61,
+          "name": "FullComponent.create_match_validator",
+          "start_line": 50
+        },
+        {
+          "end_line": 85,
+          "name": "FullComponent.finalize_match_result",
+          "start_line": 63
+        },
+        {
+          "end_line": 101,
+          "name": "FullComponent.redistribute_on_node_split",
+          "start_line": 87
+        },
+        {
+          "end_line": 127,
+          "name": "FullComponent.evict_component",
+          "start_line": 103
+        },
+        {
+          "end_line": 130,
+          "name": "FullComponent.eviction_priority",
+          "start_line": 129
+        },
+        {
+          "end_line": 151,
+          "name": "FullComponent.drive_eviction",
+          "start_line": 132
+        },
+        {
+          "end_line": 172,
+          "name": "FullComponent.drive_host_eviction",
+          "start_line": 153
+        },
+        {
+          "end_line": 215,
+          "name": "FullComponent.acquire_component_lock",
+          "start_line": 174
+        },
+        {
+          "end_line": 250,
+          "name": "FullComponent.release_component_lock",
+          "start_line": 217
+        },
+        {
+          "end_line": 299,
+          "name": "FullComponent.build_hicache_transfers",
+          "start_line": 254
+        },
+        {
+          "end_line": 333,
+          "name": "FullComponent.commit_hicache_transfer",
+          "start_line": 301
+        }
+      ],
+      "output": "A13c-full-component.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/unified_cache_components/full_component.py",
+      "source_sha256": "339cdb3ce23bb949d169ae2088326cc86f8fd35fc7746657c0e042719189330b"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 871,
+          "name": "SWAComponent",
+          "start_line": 42
+        }
+      ],
+      "function_count": 27,
+      "functions": [
+        {
+          "end_line": 61,
+          "name": "SWAComponent.__init__",
+          "start_line": 52
+        },
+        {
+          "end_line": 68,
+          "name": "SWAComponent._translate_full_to_swa",
+          "start_line": 65
+        },
+        {
+          "end_line": 93,
+          "name": "SWAComponent.refresh_lru",
+          "start_line": 70
+        },
+        {
+          "end_line": 102,
+          "name": "SWAComponent._restore_device_value",
+          "start_line": 95
+        },
+        {
+          "end_line": 115,
+          "name": "SWAComponent._restore_device_value_with_locked_full",
+          "start_line": 104
+        },
+        {
+          "end_line": 142,
+          "name": "SWAComponent.create_match_validator",
+          "start_line": 117
+        },
+        {
+          "end_line": 140,
+          "name": "SWAComponent.create_match_validator.<local>.validator",
+          "start_line": 130
+        },
+        {
+          "end_line": 176,
+          "name": "SWAComponent.finalize_match_result",
+          "start_line": 144
+        },
+        {
+          "end_line": 236,
+          "name": "SWAComponent.update_component_on_insert_overlap",
+          "start_line": 178
+        },
+        {
+          "end_line": 269,
+          "name": "SWAComponent.recover_after_unevict",
+          "start_line": 238
+        },
+        {
+          "end_line": 306,
+          "name": "SWAComponent.commit_insert_component_data",
+          "start_line": 271
+        },
+        {
+          "end_line": 327,
+          "name": "SWAComponent._maybe_split_leaf_for_swa_lock",
+          "start_line": 308
+        },
+        {
+          "end_line": 369,
+          "name": "SWAComponent.redistribute_on_node_split",
+          "start_line": 329
+        },
+        {
+          "end_line": 412,
+          "name": "SWAComponent.evict_component",
+          "start_line": 371
+        },
+        {
+          "end_line": 415,
+          "name": "SWAComponent.eviction_priority",
+          "start_line": 414
+        },
+        {
+          "end_line": 440,
+          "name": "SWAComponent.drive_eviction",
+          "start_line": 417
+        },
+        {
+          "end_line": 492,
+          "name": "SWAComponent.acquire_component_lock",
+          "start_line": 442
+        },
+        {
+          "end_line": 538,
+          "name": "SWAComponent.release_component_lock",
+          "start_line": 494
+        },
+        {
+          "end_line": 581,
+          "name": "SWAComponent.release_window_lock",
+          "start_line": 540
+        },
+        {
+          "end_line": 593,
+          "name": "SWAComponent.prepare_for_caching_req",
+          "start_line": 583
+        },
+        {
+          "end_line": 607,
+          "name": "SWAComponent.free_out_of_window_slots",
+          "start_line": 595
+        },
+        {
+          "end_line": 714,
+          "name": "SWAComponent.build_hicache_transfers",
+          "start_line": 611
+        },
+        {
+          "end_line": 761,
+          "name": "SWAComponent.commit_hicache_transfer",
+          "start_line": 716
+        },
+        {
+          "end_line": 767,
+          "name": "SWAComponent._release_swa_host",
+          "start_line": 763
+        },
+        {
+          "end_line": 781,
+          "name": "SWAComponent._attach_swa_host_value",
+          "start_line": 769
+        },
+        {
+          "end_line": 849,
+          "name": "SWAComponent._commit_prefetch",
+          "start_line": 783
+        },
+        {
+          "end_line": 871,
+          "name": "SWAComponent.drive_host_eviction",
+          "start_line": 851
+        }
+      ],
+      "output": "A13d-swa-component.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/unified_cache_components/swa_component.py",
+      "source_sha256": "2069ef4e04d721600a4ac0262d88c674ca7fc4fa629f0ab2735bba8fc1528a78"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 628,
+          "name": "MambaComponent",
+          "start_line": 40
+        }
+      ],
+      "function_count": 19,
+      "functions": [
+        {
+          "end_line": 57,
+          "name": "MambaComponent.__init__",
+          "start_line": 43
+        },
+        {
+          "end_line": 70,
+          "name": "MambaComponent.create_match_validator",
+          "start_line": 59
+        },
+        {
+          "end_line": 123,
+          "name": "MambaComponent.finalize_match_result",
+          "start_line": 72
+        },
+        {
+          "end_line": 154,
+          "name": "MambaComponent.commit_insert_component_data",
+          "start_line": 125
+        },
+        {
+          "end_line": 164,
+          "name": "MambaComponent.redistribute_on_node_split",
+          "start_line": 156
+        },
+        {
+          "end_line": 201,
+          "name": "MambaComponent.evict_component",
+          "start_line": 166
+        },
+        {
+          "end_line": 226,
+          "name": "MambaComponent.drive_eviction",
+          "start_line": 203
+        },
+        {
+          "end_line": 256,
+          "name": "MambaComponent.acquire_component_lock",
+          "start_line": 228
+        },
+        {
+          "end_line": 286,
+          "name": "MambaComponent.release_component_lock",
+          "start_line": 258
+        },
+        {
+          "end_line": 295,
+          "name": "MambaComponent._alloc_mamba_slot",
+          "start_line": 288
+        },
+        {
+          "end_line": 299,
+          "name": "MambaComponent.int8_ckpt_pool",
+          "start_line": 297
+        },
+        {
+          "end_line": 307,
+          "name": "MambaComponent._alloc_int8_ckpt_slot",
+          "start_line": 301
+        },
+        {
+          "end_line": 316,
+          "name": "MambaComponent._commit_int8_checkpoint",
+          "start_line": 309
+        },
+        {
+          "end_line": 322,
+          "name": "MambaComponent._free_mamba_value",
+          "start_line": 318
+        },
+        {
+          "end_line": 401,
+          "name": "MambaComponent.prepare_for_caching_req",
+          "start_line": 324
+        },
+        {
+          "end_line": 445,
+          "name": "MambaComponent.cleanup_after_caching_req",
+          "start_line": 403
+        },
+        {
+          "end_line": 538,
+          "name": "MambaComponent.build_hicache_transfers",
+          "start_line": 449
+        },
+        {
+          "end_line": 603,
+          "name": "MambaComponent.commit_hicache_transfer",
+          "start_line": 540
+        },
+        {
+          "end_line": 628,
+          "name": "MambaComponent.drive_host_eviction",
+          "start_line": 605
+        }
+      ],
+      "output": "A13e-mamba-component.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/unified_cache_components/mamba_component.py",
+      "source_sha256": "1de74dec0b8ffd09f4597bbc13c0d15a64acb41f414d05316396dfc40f1e1666"
+    },
+    {
+      "class_count": 4,
+      "classes": [
+        {
+          "end_line": 100,
+          "name": "CacheOperation",
+          "start_line": 43
+        },
+        {
+          "end_line": 115,
+          "name": "StorageOperation",
+          "start_line": 103
+        },
+        {
+          "end_line": 153,
+          "name": "PrefetchOperation",
+          "start_line": 118
+        },
+        {
+          "end_line": 796,
+          "name": "HybridCacheController",
+          "start_line": 156
+        }
+      ],
+      "function_count": 33,
+      "functions": [
+        {
+          "end_line": 53,
+          "name": "CacheOperation.__init__",
+          "start_line": 44
+        },
+        {
+          "end_line": 80,
+          "name": "CacheOperation.merge_pool_transfers",
+          "start_line": 55
+        },
+        {
+          "end_line": 68,
+          "name": "CacheOperation.merge_pool_transfers.<local>.cat_or_none",
+          "start_line": 66
+        },
+        {
+          "end_line": 100,
+          "name": "CacheOperation.merge_ops",
+          "start_line": 82
+        },
+        {
+          "end_line": 115,
+          "name": "StorageOperation.__init__",
+          "start_line": 104
+        },
+        {
+          "end_line": 139,
+          "name": "PrefetchOperation.__init__",
+          "start_line": 119
+        },
+        {
+          "end_line": 146,
+          "name": "PrefetchOperation.increment",
+          "start_line": 141
+        },
+        {
+          "end_line": 150,
+          "name": "PrefetchOperation.mark_terminate",
+          "start_line": 148
+        },
+        {
+          "end_line": 153,
+          "name": "PrefetchOperation.is_terminated",
+          "start_line": 152
+        },
+        {
+          "end_line": 208,
+          "name": "HybridCacheController.__init__",
+          "start_line": 157
+        },
+        {
+          "end_line": 212,
+          "name": "HybridCacheController._start_storage_threads",
+          "start_line": 210
+        },
+        {
+          "end_line": 230,
+          "name": "HybridCacheController.attach_storage_backend",
+          "start_line": 214
+        },
+        {
+          "end_line": 293,
+          "name": "HybridCacheController.parse_storage_backend_extra_config",
+          "start_line": 232
+        },
+        {
+          "end_line": 306,
+          "name": "HybridCacheController.clear_storage_backend",
+          "start_line": 295
+        },
+        {
+          "end_line": 315,
+          "name": "HybridCacheController._init_extra_host_mem_release_queues",
+          "start_line": 308
+        },
+        {
+          "end_line": 323,
+          "name": "HybridCacheController._append_host_mem_release_pages",
+          "start_line": 317
+        },
+        {
+          "end_line": 351,
+          "name": "HybridCacheController.append_host_mem_release",
+          "start_line": 325
+        },
+        {
+          "end_line": 359,
+          "name": "HybridCacheController.reset",
+          "start_line": 353
+        },
+        {
+          "end_line": 391,
+          "name": "HybridCacheController.write",
+          "start_line": 361
+        },
+        {
+          "end_line": 437,
+          "name": "HybridCacheController.start_writing",
+          "start_line": 393
+        },
+        {
+          "end_line": 480,
+          "name": "HybridCacheController.load",
+          "start_line": 439
+        },
+        {
+          "end_line": 530,
+          "name": "HybridCacheController.start_loading",
+          "start_line": 482
+        },
+        {
+          "end_line": 547,
+          "name": "HybridCacheController._record_transfer_indices_on_stream",
+          "start_line": 532
+        },
+        {
+          "end_line": 567,
+          "name": "HybridCacheController.prefetch",
+          "start_line": 549
+        },
+        {
+          "end_line": 585,
+          "name": "HybridCacheController.write_storage",
+          "start_line": 569
+        },
+        {
+          "end_line": 611,
+          "name": "HybridCacheController._storage_hit_query",
+          "start_line": 587
+        },
+        {
+          "end_line": 639,
+          "name": "HybridCacheController.move_hybrid_indices",
+          "start_line": 613
+        },
+        {
+          "end_line": 656,
+          "name": "HybridCacheController._page_transfer",
+          "start_line": 641
+        },
+        {
+          "end_line": 666,
+          "name": "HybridCacheController._page_backup",
+          "start_line": 658
+        },
+        {
+          "end_line": 693,
+          "name": "HybridCacheController._resolve_sidecar_derived_pool_transfers",
+          "start_line": 668
+        },
+        {
+          "end_line": 713,
+          "name": "HybridCacheController._sync_trailing_keys",
+          "start_line": 695
+        },
+        {
+          "end_line": 796,
+          "name": "HybridCacheController._resolve_pool_transfers_allocation",
+          "start_line": 715
+        },
+        {
+          "end_line": 735,
+          "name": "HybridCacheController._resolve_pool_transfers_allocation.<local>.rollback_allocated",
+          "start_line": 729
+        }
+      ],
+      "output": "A14-hybrid-controller.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/hybrid_cache/hybrid_cache_controller.py",
+      "source_sha256": "a0547a601bbc67b22389910bb63229980b91e88badc1e87fd8f75b1b05a40641"
+    },
+    {
+      "class_count": 8,
+      "classes": [
+        {
+          "end_line": 688,
+          "name": "StackBuildResult",
+          "start_line": 678
+        },
+        {
+          "end_line": 711,
+          "name": "StackStrategy",
+          "start_line": 691
+        },
+        {
+          "end_line": 796,
+          "name": "_DeepSeekV4Strategy",
+          "start_line": 714
+        },
+        {
+          "end_line": 860,
+          "name": "_MambaStrategy",
+          "start_line": 799
+        },
+        {
+          "end_line": 934,
+          "name": "_SwaStrategy",
+          "start_line": 871
+        },
+        {
+          "end_line": 1005,
+          "name": "_DsaStrategy",
+          "start_line": 937
+        },
+        {
+          "end_line": 1068,
+          "name": "_MiniMaxSparseStrategy",
+          "start_line": 1008
+        },
+        {
+          "end_line": 1143,
+          "name": "_PlainKvStrategy",
+          "start_line": 1071
+        }
+      ],
+      "function_count": 34,
+      "functions": [
+        {
+          "end_line": 52,
+          "name": "_make_layer_mapper",
+          "start_line": 43
+        },
+        {
+          "end_line": 50,
+          "name": "_make_layer_mapper.<local>.mapper",
+          "start_line": 47
+        },
+        {
+          "end_line": 77,
+          "name": "build_kv_host_pool",
+          "start_line": 55
+        },
+        {
+          "end_line": 103,
+          "name": "build_pool_entry",
+          "start_line": 80
+        },
+        {
+          "end_line": 163,
+          "name": "build_kv_only_stack",
+          "start_line": 106
+        },
+        {
+          "end_line": 245,
+          "name": "build_hybrid_swa_stack",
+          "start_line": 166
+        },
+        {
+          "end_line": 270,
+          "name": "_deepseek_v4_num_host_pages",
+          "start_line": 248
+        },
+        {
+          "end_line": 281,
+          "name": "_dsv4_compressed_region_buffers",
+          "start_line": 273
+        },
+        {
+          "end_line": 517,
+          "name": "build_deepseek_v4_hicache_stack",
+          "start_line": 284
+        },
+        {
+          "end_line": 598,
+          "name": "build_hybrid_mamba_stack",
+          "start_line": 520
+        },
+        {
+          "end_line": 668,
+          "name": "build_anchor_sidecar_stack",
+          "start_line": 601
+        },
+        {
+          "end_line": 693,
+          "name": "StackStrategy.matches",
+          "start_line": 692
+        },
+        {
+          "end_line": 711,
+          "name": "StackStrategy.build",
+          "start_line": 695
+        },
+        {
+          "end_line": 723,
+          "name": "_DeepSeekV4Strategy.matches",
+          "start_line": 715
+        },
+        {
+          "end_line": 796,
+          "name": "_DeepSeekV4Strategy.build",
+          "start_line": 725
+        },
+        {
+          "end_line": 806,
+          "name": "_MambaStrategy.matches",
+          "start_line": 800
+        },
+        {
+          "end_line": 860,
+          "name": "_MambaStrategy.build",
+          "start_line": 808
+        },
+        {
+          "end_line": 868,
+          "name": "_swa_layer_mappings",
+          "start_line": 863
+        },
+        {
+          "end_line": 882,
+          "name": "_SwaStrategy.matches",
+          "start_line": 872
+        },
+        {
+          "end_line": 934,
+          "name": "_SwaStrategy.build",
+          "start_line": 884
+        },
+        {
+          "end_line": 943,
+          "name": "_DsaStrategy.matches",
+          "start_line": 938
+        },
+        {
+          "end_line": 1005,
+          "name": "_DsaStrategy.build",
+          "start_line": 945
+        },
+        {
+          "end_line": 1014,
+          "name": "_MiniMaxSparseStrategy.matches",
+          "start_line": 1009
+        },
+        {
+          "end_line": 1068,
+          "name": "_MiniMaxSparseStrategy.build",
+          "start_line": 1016
+        },
+        {
+          "end_line": 1094,
+          "name": "_PlainKvStrategy.matches",
+          "start_line": 1072
+        },
+        {
+          "end_line": 1143,
+          "name": "_PlainKvStrategy.build",
+          "start_line": 1096
+        },
+        {
+          "end_line": 1160,
+          "name": "register_stack_strategy",
+          "start_line": 1157
+        },
+        {
+          "end_line": 1170,
+          "name": "_select_strategy",
+          "start_line": 1163
+        },
+        {
+          "end_line": 1200,
+          "name": "_apply_stack_result",
+          "start_line": 1173
+        },
+        {
+          "end_line": 1237,
+          "name": "attach_hybrid_pool_to_unified_cache",
+          "start_line": 1203
+        },
+        {
+          "end_line": 1336,
+          "name": "build_minimax_sparse_hicache_stack",
+          "start_line": 1240
+        },
+        {
+          "end_line": 1425,
+          "name": "attach_hybrid_minimax_sparse_pool_to_hiradix_cache",
+          "start_line": 1339
+        },
+        {
+          "end_line": 1483,
+          "name": "attach_hybrid_dsa_pool_to_hiradix_cache",
+          "start_line": 1428
+        },
+        {
+          "end_line": 1545,
+          "name": "attach_hybrid_pool_to_mamba_cache",
+          "start_line": 1486
+        }
+      ],
+      "output": "A15-hybrid-pool-assembler.md",
+      "scope": "all",
+      "source": "python/sglang/srt/mem_cache/hybrid_cache/hybrid_pool_assembler.py",
+      "source_sha256": "8df4ff05428d1853bc46b4b7d0b02a163084f99b486521f6ced0462f636f8b69"
+    },
+    {
+      "class_count": 5,
+      "classes": [
+        {
+          "end_line": 47,
+          "name": "DecodePrefixMatch",
+          "start_line": 23
+        },
+        {
+          "end_line": 55,
+          "name": "HiCacheRestoreResult",
+          "start_line": 50
+        },
+        {
+          "end_line": 149,
+          "name": "DecodeHiCachePreallocMixin",
+          "start_line": 58
+        },
+        {
+          "end_line": 165,
+          "name": "HiCacheRestoreGatedKVReceiver",
+          "start_line": 152
+        },
+        {
+          "end_line": 309,
+          "name": "DecodeHiCacheTransferMixin",
+          "start_line": 168
+        }
+      ],
+      "function_count": 13,
+      "functions": [
+        {
+          "end_line": 34,
+          "name": "DecodePrefixMatch.l1_prefix_len",
+          "start_line": 32
+        },
+        {
+          "end_line": 38,
+          "name": "DecodePrefixMatch.decode_prefix_len",
+          "start_line": 36
+        },
+        {
+          "end_line": 42,
+          "name": "DecodePrefixMatch.needs_local_restore",
+          "start_line": 40
+        },
+        {
+          "end_line": 47,
+          "name": "DecodePrefixMatch.restore_token_count",
+          "start_line": 44
+        },
+        {
+          "end_line": 97,
+          "name": "DecodeHiCachePreallocMixin._build_decode_prefix_match",
+          "start_line": 61
+        },
+        {
+          "end_line": 137,
+          "name": "DecodeHiCachePreallocMixin._start_hicache_prefetch",
+          "start_line": 99
+        },
+        {
+          "end_line": 149,
+          "name": "DecodeHiCachePreallocMixin._hicache_pending_restore_tokens",
+          "start_line": 139
+        },
+        {
+          "end_line": 156,
+          "name": "HiCacheRestoreGatedKVReceiver.__init__",
+          "start_line": 155
+        },
+        {
+          "end_line": 165,
+          "name": "HiCacheRestoreGatedKVReceiver.poll",
+          "start_line": 158
+        },
+        {
+          "end_line": 179,
+          "name": "DecodeHiCacheTransferMixin._clean_hicache_prefetch_resources",
+          "start_line": 171
+        },
+        {
+          "end_line": 238,
+          "name": "DecodeHiCacheTransferMixin._try_hicache_queue_load_back",
+          "start_line": 181
+        },
+        {
+          "end_line": 290,
+          "name": "DecodeHiCacheTransferMixin._process_hicache_local_restores",
+          "start_line": 240
+        },
+        {
+          "end_line": 309,
+          "name": "DecodeHiCacheTransferMixin._commit_hicache_local_restore_to_req",
+          "start_line": 292
+        }
+      ],
+      "output": "A16-decode-hicache.md",
+      "scope": "all",
+      "source": "python/sglang/srt/disaggregation/decode_hicache_mixin.py",
+      "source_sha256": "ffc6195b82ff00f9b7a524b42ded565592d6895d000aaddf22825c99ad9c7512"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 4227,
+          "name": "Scheduler",
+          "start_line": 298
+        }
+      ],
+      "function_count": 6,
+      "functions": [
+        {
+          "end_line": 2312,
+          "name": "Scheduler._prefetch_kvcache",
+          "start_line": 2289
+        },
+        {
+          "end_line": 3032,
+          "name": "Scheduler._get_new_batch_prefill_raw",
+          "start_line": 2772
+        },
+        {
+          "end_line": 3549,
+          "name": "Scheduler.clear_hicache_storage_wrapped",
+          "start_line": 3541
+        },
+        {
+          "end_line": 3704,
+          "name": "Scheduler.attach_hicache_storage_wrapped",
+          "start_line": 3650
+        },
+        {
+          "end_line": 3751,
+          "name": "Scheduler.detach_hicache_storage_wrapped",
+          "start_line": 3706
+        },
+        {
+          "end_line": 4004,
+          "name": "Scheduler.abort_request",
+          "start_line": 3890
+        }
+      ],
+      "output": "A17-scheduler-integration.md",
+      "scope": "selected",
+      "source": "python/sglang/srt/managers/scheduler.py",
+      "source_sha256": "d35ea865cea6c205fa97cd66443343a788d69a19cee2886106e28096c08083a1"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 1221,
+          "name": "PrefillAdder",
+          "start_line": 441
+        }
+      ],
+      "function_count": 2,
+      "functions": [
+        {
+          "end_line": 144,
+          "name": "match_prefix_for_req",
+          "start_line": 92
+        },
+        {
+          "end_line": 1149,
+          "name": "PrefillAdder.add_one_req",
+          "start_line": 976
+        }
+      ],
+      "output": "A18-schedule-policy.md",
+      "scope": "selected",
+      "source": "python/sglang/srt/managers/schedule_policy.py",
+      "source_sha256": "5e5d455072ac169bb998458d4392de42e7dc1051ac915d18dac0e604913f46d8"
+    },
+    {
+      "class_count": 2,
+      "classes": [
+        {
+          "end_line": 1633,
+          "name": "Req",
+          "start_line": 668
+        },
+        {
+          "end_line": 3064,
+          "name": "ScheduleBatch",
+          "start_line": 1752
+        }
+      ],
+      "function_count": 7,
+      "functions": [
+        {
+          "end_line": 1056,
+          "name": "Req.needs_host_load_back",
+          "start_line": 1050
+        },
+        {
+          "end_line": 1063,
+          "name": "Req._cache_commit_len",
+          "start_line": 1058
+        },
+        {
+          "end_line": 1071,
+          "name": "Req.pop_committed_kv_cache",
+          "start_line": 1065
+        },
+        {
+          "end_line": 1083,
+          "name": "Req.pop_overallocated_kv_cache",
+          "start_line": 1073
+        },
+        {
+          "end_line": 1248,
+          "name": "Req.init_next_round_input",
+          "start_line": 1134
+        },
+        {
+          "end_line": 2362,
+          "name": "ScheduleBatch.prepare_for_extend",
+          "start_line": 2093
+        },
+        {
+          "end_line": 2817,
+          "name": "ScheduleBatch.prepare_for_decode",
+          "start_line": 2741
+        }
+      ],
+      "output": "A19-request-batch-state.md",
+      "scope": "selected",
+      "source": "python/sglang/srt/managers/schedule_batch.py",
+      "source_sha256": "9d5e6715d5eecab69f1a2b7c6f8f7a2b3ffe050b507ade618b8aa90de5ed3874"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 952,
+          "name": "SchedulerBatchResultProcessor",
+          "start_line": 61
+        }
+      ],
+      "function_count": 2,
+      "functions": [
+        {
+          "end_line": 342,
+          "name": "SchedulerBatchResultProcessor.process_batch_result_prefill",
+          "start_line": 178
+        },
+        {
+          "end_line": 731,
+          "name": "SchedulerBatchResultProcessor.process_batch_result_decode",
+          "start_line": 629
+        }
+      ],
+      "output": "A19b-result-cache-commit.md",
+      "scope": "selected",
+      "source": "python/sglang/srt/managers/scheduler_components/batch_result_processor.py",
+      "source_sha256": "6ac40abb78470a7b3e168d691616278b42b5d18c12c7d68a633f2cfa0b79dec8"
+    },
+    {
+      "class_count": 4,
+      "classes": [
+        {
+          "end_line": 1720,
+          "name": "TokenizerMetricsCollector",
+          "start_line": 1411
+        },
+        {
+          "end_line": 1728,
+          "name": "StorageMetrics",
+          "start_line": 1723
+        },
+        {
+          "end_line": 1826,
+          "name": "StorageMetricsCollector",
+          "start_line": 1731
+        },
+        {
+          "end_line": 1942,
+          "name": "RadixCacheMetricsCollector",
+          "start_line": 1844
+        }
+      ],
+      "function_count": 12,
+      "functions": [
+        {
+          "end_line": 1633,
+          "name": "TokenizerMetricsCollector.__init__",
+          "start_line": 1412
+        },
+        {
+          "end_line": 1686,
+          "name": "TokenizerMetricsCollector.observe_one_finished_request",
+          "start_line": 1635
+        },
+        {
+          "end_line": 1800,
+          "name": "StorageMetricsCollector.__init__",
+          "start_line": 1732
+        },
+        {
+          "end_line": 1804,
+          "name": "StorageMetricsCollector.log_prefetched_tokens",
+          "start_line": 1802
+        },
+        {
+          "end_line": 1808,
+          "name": "StorageMetricsCollector.log_backuped_tokens",
+          "start_line": 1806
+        },
+        {
+          "end_line": 1811,
+          "name": "StorageMetricsCollector._log_histogram",
+          "start_line": 1810
+        },
+        {
+          "end_line": 1826,
+          "name": "StorageMetricsCollector.log_storage_metrics",
+          "start_line": 1813
+        },
+        {
+          "end_line": 1930,
+          "name": "RadixCacheMetricsCollector.__init__",
+          "start_line": 1845
+        },
+        {
+          "end_line": 1933,
+          "name": "RadixCacheMetricsCollector.increment_eviction_num_tokens",
+          "start_line": 1932
+        },
+        {
+          "end_line": 1936,
+          "name": "RadixCacheMetricsCollector.increment_load_back_num_tokens",
+          "start_line": 1935
+        },
+        {
+          "end_line": 1939,
+          "name": "RadixCacheMetricsCollector.observe_eviction_duration",
+          "start_line": 1938
+        },
+        {
+          "end_line": 1942,
+          "name": "RadixCacheMetricsCollector.observe_load_back_duration",
+          "start_line": 1941
+        }
+      ],
+      "output": "A19c-hicache-metrics.md",
+      "scope": "selected",
+      "source": "python/sglang/srt/observability/metrics_collector.py",
+      "source_sha256": "3e996015953817f7f44e669cb5403a29077aa338df2083d69af786b124dda41d"
+    },
+    {
+      "class_count": 2,
+      "classes": [
+        {
+          "end_line": 244,
+          "name": "SchedulerOutputStreamer",
+          "start_line": 38
+        },
+        {
+          "end_line": 572,
+          "name": "_GenerationStreamAccumulator",
+          "start_line": 247
+        }
+      ],
+      "function_count": 6,
+      "functions": [
+        {
+          "end_line": 58,
+          "name": "SchedulerOutputStreamer._get_storage_backend_type",
+          "start_line": 50
+        },
+        {
+          "end_line": 91,
+          "name": "SchedulerOutputStreamer.get_cached_tokens_details",
+          "start_line": 60
+        },
+        {
+          "end_line": 164,
+          "name": "SchedulerOutputStreamer._stream_output_generation",
+          "start_line": 119
+        },
+        {
+          "end_line": 244,
+          "name": "SchedulerOutputStreamer._stream_output_embedding",
+          "start_line": 174
+        },
+        {
+          "end_line": 518,
+          "name": "_GenerationStreamAccumulator.accept",
+          "start_line": 323
+        },
+        {
+          "end_line": 572,
+          "name": "_GenerationStreamAccumulator.to_payload",
+          "start_line": 520
+        }
+      ],
+      "output": "A19d-cache-hit-reporting.md",
+      "scope": "selected",
+      "source": "python/sglang/srt/managers/scheduler_components/output_streamer.py",
+      "source_sha256": "6f9255c263a479908fb385115d5c9397ed4cd7f3497413471a6227eae5ce992a"
+    },
+    {
+      "class_count": 1,
+      "classes": [
+        {
+          "end_line": 7467,
+          "name": "ServerArgs",
+          "start_line": 390
+        }
+      ],
+      "function_count": 3,
+      "functions": [
+        {
+          "end_line": 5675,
+          "name": "ServerArgs._handle_hicache",
+          "start_line": 5657
+        },
+        {
+          "end_line": 5708,
+          "name": "ServerArgs._resolve_layout_io_compatibility",
+          "start_line": 5677
+        },
+        {
+          "end_line": 5729,
+          "name": "ServerArgs._resolve_storage_layout_compatibility",
+          "start_line": 5710
+        }
+      ],
+      "output": "A20-server-args.md",
+      "scope": "selected",
+      "source": "python/sglang/srt/server_args.py",
+      "source_sha256": "50018eecffd9c7016e82a69777951260d34cbd2596315fd5891249badb047f03"
+    },
+    {
+      "files": [
+        {
+          "line_count": 351,
+          "source": "python/sglang/srt/mem_cache/cpp_utils/hash_binding.cpp",
+          "source_sha256": "f4ab69e2e99b2b11dd19588bed5011ce737bf9fdf639669925d4119e0aa24b2a"
+        },
+        {
+          "line_count": 524,
+          "source": "python/sglang/jit_kernel/csrc/kvcacheio/hicache.cuh",
+          "source_sha256": "69934b6a8d05d0fca0e82515fa457578ae5ad5241bf3b9403e22bf8e0fe9868c"
+        },
+        {
+          "line_count": 328,
+          "source": "python/sglang/jit_kernel/csrc/kvcacheio/staged_write_back.cuh",
+          "source_sha256": "1d0eff2d394a51a0e2880e8264a0272db9a534af65510f0f3e38135b71936e41"
+        }
+      ],
+      "output": "A21-kernel-cpp.md",
+      "scope": "complete_files",
+      "symbol_count": 20
+    }
+  ],
+  "generator": "docs/hicache_source_guide/tools/generate_function_appendix.py",
+  "python_class_total": 132,
+  "python_function_total": 1178,
+  "revision": "f1c247edf997e932ad6fa35d479e98b41a18ce6e"
+}
