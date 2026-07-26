@@ -209,6 +209,7 @@ class HiRadixCache(RadixCache):
 
         self.evictable_host_leaves = set()
         self._l1_l2_read_reclaim_unsupported_warned = False
+        self._query_first_unsupported_warned = False
 
         super().__init__(params=params)
 
@@ -556,6 +557,14 @@ class HiRadixCache(RadixCache):
                 self.ongoing_prefetch.pop(req_id, None)
         except Exception:
             logger.exception("Force release pending prefetch ops failed.")
+
+        result_queue = getattr(cc, "prefetch_query_result_queue", None)
+        if result_queue is not None:
+            try:
+                while True:
+                    result_queue.get_nowait()
+            except Empty:
+                pass
 
         # Force release leftover backup ops: drop host protection on nodes.
         try:
@@ -1251,6 +1260,10 @@ class HiRadixCache(RadixCache):
             return False
         return True
 
+    def _supports_query_first_prefetch(self) -> bool:
+        """Use the same conservative deployment scope as L1+L2 read reclaim."""
+        return self._supports_l1_l2_read_reclaim()
+
     def _evict_l1_l2_leaf(self, node: TreeNode) -> int:
         """Remove an unreferenced topology leaf and release both cache copies."""
         if not self._is_reclaimable_l1_l2_leaf(node):
@@ -1543,11 +1556,105 @@ class HiRadixCache(RadixCache):
             n_release=n_release,
             log_metrics=True,
         )
+        self._drain_query_first_results()
+
+    def _discard_query_first_prefetch(
+        self, req_id: str, operation: PrefetchOperation
+    ) -> bool:
+        """Release a query-first operation before any L2 read has started."""
+        info = self.ongoing_prefetch.get(req_id)
+        if info is None or info[3] is not operation:
+            return False
+
+        last_host_node, prefetch_key, host_indices, _ = info
+        if host_indices is not None or operation.is_read_started():
+            return False
+
+        operation.mark_terminate()
+        self.ongoing_prefetch.pop(req_id, None)
+        last_host_node.release_host()
+        self.cache_controller.prefetch_tokens_occupied = max(
+            0,
+            self.cache_controller.prefetch_tokens_occupied - len(prefetch_key),
+        )
+        return True
+
+    def _start_query_first_read(
+        self, req_id: str, operation: PrefetchOperation
+    ) -> None:
+        """Allocate only the L2 pages confirmed to exist in L3, then start IO."""
+        info = self.ongoing_prefetch.get(req_id)
+        if info is None or info[3] is not operation or operation.is_read_started():
+            return
+
+        last_host_node, prefetch_key, _, _ = info
+        storage_hit_tokens = operation.get_query_result()
+        if storage_hit_tokens is None:
+            return
+
+        target_tokens = min(storage_hit_tokens, len(prefetch_key))
+        target_tokens -= target_tokens % self.page_size
+        if operation.is_terminated() or target_tokens < self.prefetch_threshold:
+            self._discard_query_first_prefetch(req_id, operation)
+            return
+
+        host_indices = self.cache_controller.mem_pool_host.alloc(target_tokens)
+        if host_indices is None:
+            self.evict_host(target_tokens, allow_l1_l2=True)
+            host_indices = self.cache_controller.mem_pool_host.alloc(target_tokens)
+
+        if host_indices is None:
+            available_size = self.cache_controller.mem_pool_host.available_size()
+            partial_tokens = min(target_tokens, available_size)
+            partial_tokens -= partial_tokens % self.page_size
+            if partial_tokens >= self.prefetch_threshold:
+                host_indices = self.cache_controller.mem_pool_host.alloc(partial_tokens)
+                if host_indices is not None:
+                    target_tokens = partial_tokens
+
+        if host_indices is None:
+            self._discard_query_first_prefetch(req_id, operation)
+            return
+
+        if not self.cache_controller.resume_prefetch(
+            operation, host_indices, target_tokens
+        ):
+            self.cache_controller.mem_pool_host.free(host_indices)
+            self._discard_query_first_prefetch(req_id, operation)
+            return
+
+        self.ongoing_prefetch[req_id] = (
+            last_host_node,
+            prefetch_key,
+            host_indices,
+            operation,
+        )
+
+    def _drain_query_first_results(self) -> None:
+        """Consume local query completions without adding another collective."""
+        result_queue = self.cache_controller.prefetch_query_result_queue
+        for _ in range(result_queue.qsize()):
+            try:
+                operation = result_queue.get_nowait()
+            except Empty:
+                return
+
+            info = self.ongoing_prefetch.get(operation.request_id)
+            if (
+                info is None
+                or info[3] is not operation
+                or not getattr(operation, "query_first", False)
+            ):
+                continue
+            self._start_query_first_read(operation.request_id, operation)
 
     # Timeout is linearly increasing with the number of pages
     def _prefetch_timeout_check_linear_func(self, operation: PrefetchOperation):
         cfg = self.prefetch_timeout_config
-        num_tokens = len(operation.hash_value) * self.page_size
+        if getattr(operation, "query_first", False) and not operation.is_read_started():
+            num_tokens = len(operation.token_ids)
+        else:
+            num_tokens = len(operation.hash_value) * self.page_size
         timeout = min(cfg.max, cfg.base + cfg.per_ki_token * num_tokens / 1024)
         return time.monotonic() - operation.start_time > timeout
 
@@ -1603,9 +1710,29 @@ class HiRadixCache(RadixCache):
             req_id
         ]
 
-        if operation.host_indices is None:
-            # prefetch has not been issued due to insufficient host memory
-            return True
+        if getattr(operation, "query_first", False) and not operation.is_read_started():
+            storage_hit_tokens = operation.get_query_result()
+            if storage_hit_tokens is None:
+                if (
+                    operation.is_terminated()
+                    or (self.prefetch_stop_policy == "best_effort")
+                    or (
+                        self.prefetch_stop_policy == "timeout"
+                        and self.is_prefetch_timeout(operation)
+                    )
+                ):
+                    self._discard_query_first_prefetch(req_id, operation)
+                    return True
+                return False
+
+            self._start_query_first_read(req_id, operation)
+            info = self.ongoing_prefetch.get(req_id)
+            if info is None:
+                return True
+            last_host_node, prefetch_key, host_indices, operation = info
+
+        if host_indices is None:
+            return False
 
         if not self.can_terminate_prefetch(operation):
             return False
@@ -1653,8 +1780,6 @@ class HiRadixCache(RadixCache):
             return
 
         _, _, _, operation = self.ongoing_prefetch[req_id]
-        if operation.host_indices is None:
-            return
         operation.mark_terminate()
 
     def pop_prefetch_loaded_tokens(self, req_id: str) -> int:
@@ -1722,6 +1847,36 @@ class HiRadixCache(RadixCache):
             return
 
         last_host_node.protect_host()
+        if self._supports_query_first_prefetch():
+            try:
+                operation = self.cache_controller.query_prefetch(
+                    req_id,
+                    prefetch_key,
+                    last_hash,
+                    prefix_keys,
+                )
+            except Exception:
+                last_host_node.release_host()
+                raise
+
+            self.ongoing_prefetch[req_id] = (
+                last_host_node,
+                prefetch_key,
+                None,
+                operation,
+            )
+            self.cache_controller.prefetch_tokens_occupied += len(prefetch_key)
+            return
+
+        if not getattr(self, "_query_first_unsupported_warned", False):
+            logger.warning(
+                "Query-first L3 prefetch is disabled for this deployment; "
+                "falling back to eager L2 allocation. The first version supports "
+                "only single-TP/CP, single-PP, plain MHA/GQA HiCache without "
+                "draft KV."
+            )
+            self._query_first_unsupported_warned = True
+
         host_indices = self.cache_controller.mem_pool_host.alloc(prefetch_length)
         if host_indices is None:
             self.evict_host(prefetch_length, allow_l1_l2=True)
@@ -1951,7 +2106,8 @@ class HiRadixCache(RadixCache):
         last_host_node, prefetch_key, host_indices, operation = self.ongoing_prefetch[
             rid
         ]
-        if operation.host_indices is None:
+        if getattr(operation, "query_first", False) and not operation.is_read_started():
+            self._discard_query_first_prefetch(rid, operation)
             return
 
         completed_tokens, _ = self.cache_controller.terminate_prefetch(operation)

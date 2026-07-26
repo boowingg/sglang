@@ -147,7 +147,7 @@ class StorageOperation:
 
     def __init__(
         self,
-        host_indices: torch.Tensor,
+        host_indices: Optional[torch.Tensor],
         token_ids: List[int],
         last_hash: Optional[str] = None,
         hash_value: Optional[List[str]] = None,
@@ -171,15 +171,20 @@ class PrefetchOperation(StorageOperation):
     def __init__(
         self,
         request_id: str,
-        host_indices: torch.Tensor,
+        host_indices: Optional[torch.Tensor],
         token_ids: List[int],
         last_hash: Optional[str] = None,
         prefix_keys: Optional[List[str]] = None,
+        query_first: bool = False,
     ):
         self.request_id = request_id
 
         self._lock = threading.Lock()
         self._terminated_flag = False
+        self.query_first = query_first
+        self._query_done = not query_first
+        self._read_started = not query_first
+        self.storage_hit_tokens = 0
         self.start_time = time.monotonic()
 
         super().__init__(host_indices, token_ids, last_hash, prefix_keys=prefix_keys)
@@ -197,6 +202,54 @@ class PrefetchOperation(StorageOperation):
 
     def is_terminated(self) -> bool:
         return self._terminated_flag
+
+    def finish_query(self, hash_value: List[str], hit_tokens: int) -> bool:
+        """Publish a query-first result unless the operation was cancelled."""
+        with self._lock:
+            if self._terminated_flag or self._query_done:
+                return False
+            self.hash_value = hash_value
+            self.storage_hit_tokens = hit_tokens
+            self._query_done = True
+            return True
+
+    def get_query_result(self) -> Optional[int]:
+        with self._lock:
+            if not self._query_done:
+                return None
+            return self.storage_hit_tokens
+
+    def start_read(
+        self,
+        host_indices: torch.Tensor,
+        target_tokens: int,
+        page_size: int,
+    ) -> bool:
+        """Bind L2 pages after the L3 query and make the operation readable."""
+        with self._lock:
+            if (
+                not self.query_first
+                or not self._query_done
+                or self._read_started
+                or self._terminated_flag
+                or target_tokens <= 0
+                or target_tokens > self.storage_hit_tokens
+                or page_size <= 0
+                or target_tokens % page_size != 0
+                or target_tokens // page_size > len(self.hash_value)
+                or len(host_indices) != target_tokens
+            ):
+                return False
+
+            self.host_indices = host_indices
+            self.hash_value = self.hash_value[: target_tokens // page_size]
+            self.start_time = time.monotonic()
+            self._read_started = True
+            return True
+
+    def is_read_started(self) -> bool:
+        with self._lock:
+            return self._read_started
 
 
 class HiCacheController:
@@ -352,6 +405,7 @@ class HiCacheController:
         self.backup_queue = Queue()
 
         self.prefetch_revoke_queue: Queue[str] = Queue()
+        self.prefetch_query_result_queue: Queue[PrefetchOperation] = Queue()
         self.ack_backup_queue: Queue[StorageOperation] = Queue()
         self.host_mem_release_queue: Queue[torch.Tensor] = Queue()
 
@@ -629,6 +683,7 @@ class HiCacheController:
             self.prefetch_queue.queue.clear()
             self.backup_queue.queue.clear()
             self.prefetch_revoke_queue.queue.clear()
+            self.prefetch_query_result_queue.queue.clear()
             self.ack_backup_queue.queue.clear()
             self.host_mem_release_queue.queue.clear()
             self.prefetch_tokens_occupied = 0
@@ -883,6 +938,37 @@ class HiCacheController:
         self.prefetch_queue.put(operation)
         return operation
 
+    def query_prefetch(
+        self,
+        request_id: str,
+        new_input_tokens: List[int],
+        last_hash: Optional[str] = None,
+        prefix_keys: Optional[List[str]] = None,
+    ) -> PrefetchOperation:
+        """Query L3 first without reserving L2 pages."""
+        operation = PrefetchOperation(
+            request_id,
+            None,
+            new_input_tokens,
+            last_hash,
+            prefix_keys,
+            query_first=True,
+        )
+        self.prefetch_queue.put(operation)
+        return operation
+
+    def resume_prefetch(
+        self,
+        operation: PrefetchOperation,
+        host_indices: torch.Tensor,
+        target_tokens: int,
+    ) -> bool:
+        """Resume a query-first operation after the scheduler allocates L2."""
+        if not operation.start_read(host_indices, target_tokens, self.page_size):
+            return False
+        self.prefetch_buffer.put(operation)
+        return True
+
     def terminate_prefetch(self, operation):
         operation.mark_terminate()
         return operation.completed_tokens, operation.hash_value
@@ -1028,14 +1114,37 @@ class HiCacheController:
                 operation = self.prefetch_queue.get(block=True, timeout=1)
                 if operation is None:
                     continue
-                hash_value, storage_hit_count = self._storage_hit_query(operation)
-                storage_hit_count_tensor = torch.tensor(
-                    storage_hit_count, dtype=torch.int
-                )
-                self._all_reduce_prefetch_groups(
-                    storage_hit_count_tensor, torch.distributed.ReduceOp.MIN
-                )
-                storage_hit_count = storage_hit_count_tensor.item()
+                query_first = getattr(operation, "query_first", False)
+                if query_first and operation.is_terminated():
+                    continue
+                try:
+                    hash_value, storage_hit_count = self._storage_hit_query(operation)
+                    storage_hit_count_tensor = torch.tensor(
+                        storage_hit_count, dtype=torch.int
+                    )
+                    self._all_reduce_prefetch_groups(
+                        storage_hit_count_tensor, torch.distributed.ReduceOp.MIN
+                    )
+                    storage_hit_count = storage_hit_count_tensor.item()
+                except Exception:
+                    if not query_first:
+                        raise
+                    logger.exception(
+                        "L3 hit query failed for prefetch request %s.",
+                        operation.request_id,
+                    )
+                    if operation.finish_query([], 0):
+                        self.prefetch_query_result_queue.put(operation)
+                    continue
+
+                if query_first:
+                    hit_pages = storage_hit_count // self.page_size
+                    storage_hit_count = hit_pages * self.page_size
+                    if operation.finish_query(
+                        hash_value[:hit_pages], storage_hit_count
+                    ):
+                        self.prefetch_query_result_queue.put(operation)
+                    continue
 
                 if storage_hit_count < self.prefetch_threshold:
                     # not to prefetch if not enough benefits

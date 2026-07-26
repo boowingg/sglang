@@ -462,9 +462,12 @@ L3 miss 很高，牺牲 L1 的代价可能超过收益。
 - Session cache 和 KV cache events 分别开启。
 - allocator used/free 总量长期守恒。
 
-## 12. 后续 query-first
+## 12. 后续 query-first（已在独立分支实现）
 
-query-first 是独立的下一阶段，不属于 V1。
+query-first 不属于本 V1 回收改动，已经在后续 `hicache-query-first` 分支独立
+实现。完整设计、状态转换和故障处理见：
+
+[`hicache_query_first_design.md`](./hicache_query_first_design.md)
 
 目标顺序是：
 
@@ -483,20 +486,17 @@ query-first 是独立的下一阶段，不属于 V1。
 - 短命中不按完整候选长度占用 L2。
 - 只有已经确认有价值的数据才允许牺牲 L1。
 
-但实现它需要显式拆分 PrefetchOperation 状态：
+实现中为 `PrefetchOperation` 增加了轻量的查询和读取阶段状态：
 
 ```text
 QUERYING
-WAITING_L2
+QUERY_DONE
 READING
-COMPLETED
-CANCELED
-FAILED
+原有完成或取消路径
 ```
 
-还要处理 query result queue、多 rank 同序推进、查询取消、查询超时、read
-timeout 和 L3 在 query/read 之间再次淘汰等问题。它的改动量和耦合度明显高于
-本分支，因此应单独开发和评审。
+新实现复用现有 prefetch 线程和读取队列，只增加本地 query result queue；
+多 rank、Hybrid、Mamba 和 draft KV 暂不启用，自动回退原 eager 路径。
 
 ## 13. 最终不变量
 
