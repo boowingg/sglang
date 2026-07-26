@@ -208,6 +208,7 @@ class HiRadixCache(RadixCache):
         atexit.register(self.shutdown)
 
         self.evictable_host_leaves = set()
+        self._l1_l2_read_reclaim_unsupported_warned = False
 
         super().__init__(params=params)
 
@@ -1204,7 +1205,101 @@ class HiRadixCache(RadixCache):
         self._update_host_leaf_status(root.parent)
         return freed_device
 
-    def evict_host(self, num_tokens: int):
+    def _is_reclaimable_l1_l2_leaf(self, node: TreeNode) -> bool:
+        """Return whether a node can be removed from both L1 and L2 safely."""
+        if (
+            node is self.root_node
+            or node.parent is None
+            or len(node.key) == 0
+            or len(node.children) != 0
+            or node.evicted
+            or not node.backuped
+            or node.lock_ref > 0
+            or node.host_ref_counter > 0
+            or node.write_through_pending_id is not None
+        ):
+            return False
+
+        key = node.key.child_key(self.page_size)
+        if node.parent.children.get(key) is not node:
+            return False
+
+        return len(node.value) == len(node.key) == len(node.host_value)
+
+    def _supports_l1_l2_read_reclaim(self) -> bool:
+        """Limit topology-changing host reclaim to the safe first-version scope."""
+        if getattr(self, "tp_world_size", 1) > 1 or getattr(self, "pp_size", 1) > 1:
+            return False
+
+        for group in (
+            getattr(self, "attn_cp_group", None),
+            getattr(self, "attn_tp_group", None),
+        ):
+            if (
+                group is not None
+                and torch.distributed.is_initialized()
+                and torch.distributed.get_world_size(group=group) > 1
+            ):
+                return False
+
+        kv_cache = getattr(self, "kv_cache", None)
+        if kv_cache is not None and not isinstance(kv_cache, MHATokenToKVPool):
+            return False
+        if isinstance(self.cache_controller, HybridCacheController):
+            return False
+        if getattr(self.cache_controller, "has_draft", False):
+            return False
+        return True
+
+    def _evict_l1_l2_leaf(self, node: TreeNode) -> int:
+        """Remove an unreferenced topology leaf and release both cache copies."""
+        if not self._is_reclaimable_l1_l2_leaf(node):
+            return 0
+
+        parent = node.parent
+        device_indices = node.value
+        host_indices = node.host_value
+        num_evicted = len(host_indices)
+
+        self._record_remove_event(node, medium=StorageMedium.GPU)
+        self._record_remove_event(node, medium=StorageMedium.CPU)
+        self.cache_controller.evict_device(device_indices)
+        self.cache_controller.evict_host(host_indices)
+
+        self.evictable_host_leaves.discard(node)
+        self._delete_leaf(node)
+        node.value = None
+        node.host_value = None
+        node.parent = None
+        self._update_host_leaf_status(parent)
+        return num_evicted
+
+    def _evict_l1_l2_leaves(self, num_tokens: int) -> int:
+        """Reclaim L1+L2 topology leaves after L2-only eviction is exhausted."""
+        eviction_heap = [
+            (self.eviction_strategy.get_priority(node), node)
+            for node in self.evictable_leaves
+        ]
+        heapq.heapify(eviction_heap)
+
+        num_evicted = 0
+        while num_evicted < num_tokens and eviction_heap:
+            _, node = heapq.heappop(eviction_heap)
+            parent = node.parent
+            reclaimed = self._evict_l1_l2_leaf(node)
+            if reclaimed == 0:
+                continue
+
+            num_evicted += reclaimed
+            if parent is not None and self._is_reclaimable_l1_l2_leaf(parent):
+                heapq.heappush(
+                    eviction_heap,
+                    (self.eviction_strategy.get_priority(parent), parent),
+                )
+
+        return num_evicted
+
+    def evict_host(self, num_tokens: int, *, allow_l1_l2: bool = False) -> int:
         leaves = list(self.evictable_host_leaves)
         eviction_heap = [
             (self.eviction_strategy.get_priority(node), node) for node in leaves
@@ -1238,6 +1333,22 @@ class HiRadixCache(RadixCache):
             if len(x.parent.children) == 0 and x.parent.evicted:
                 new_priority = self.eviction_strategy.get_priority(x.parent)
                 heapq.heappush(eviction_heap, (new_priority, x.parent))
+
+        if allow_l1_l2:
+            available_size = self.cache_controller.mem_pool_host.available_size()
+            shortage = max(0, num_tokens - available_size)
+            if shortage > 0:
+                if self._supports_l1_l2_read_reclaim():
+                    num_evicted += self._evict_l1_l2_leaves(shortage)
+                elif not getattr(self, "_l1_l2_read_reclaim_unsupported_warned", False):
+                    logger.warning(
+                        "Skip L1+L2 leaf reclaim for storage prefetch: the first "
+                        "version supports only single-TP/CP, single-PP, plain "
+                        "MHA/GQA HiCache without draft KV."
+                    )
+                    self._l1_l2_read_reclaim_unsupported_warned = True
+
+        return num_evicted
 
     def load_back(
         self, node: TreeNode, mem_quota: Optional[int] = None
@@ -1613,7 +1724,7 @@ class HiRadixCache(RadixCache):
         last_host_node.protect_host()
         host_indices = self.cache_controller.mem_pool_host.alloc(prefetch_length)
         if host_indices is None:
-            self.evict_host(prefetch_length)
+            self.evict_host(prefetch_length, allow_l1_l2=True)
             host_indices = self.cache_controller.mem_pool_host.alloc(prefetch_length)
         if host_indices is None:
             available_size = self.cache_controller.mem_pool_host.available_size()
