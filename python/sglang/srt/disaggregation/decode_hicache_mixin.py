@@ -101,7 +101,8 @@ class DecodeHiCachePreallocMixin:
     ) -> None:
         """Issue L3 storage prefetch after admission succeeds.
 
-        On failure, degrades to L2-only restore by clearing l3 fields.
+        The decode restore boundary is fixed by preallocation. If L2 admission
+        is unavailable, fail closed instead of waiting on the scheduler queue.
         """
         if (
             prefix_match is None
@@ -124,16 +125,18 @@ class DecodeHiCachePreallocMixin:
             self.tree_cache.prefetch_from_storage(
                 req.rid, node, suffix, last_hash, prefix_keys
             )
+            if self.tree_cache.is_waiting_l2_prefetch(req.rid):
+                self.tree_cache.cancel_waiting_l2_prefetch(req.rid)
             prefix_match.prefetch_registered = (
                 req.rid in self.tree_cache.ongoing_prefetch
             )
         except Exception as e:
             logger.warning(
-                "HiCache L3 prefetch failed for rid=%s: %s; falling back to L2-only LoadingBack",
+                "HiCache L3 prefetch failed for rid=%s: %s; "
+                "local restore will fail closed",
                 req.rid,
                 e,
             )
-            prefix_match.l3_storage_hit_length = 0
             prefix_match.prefetch_registered = False
 
     def _hicache_pending_restore_tokens(self) -> int:

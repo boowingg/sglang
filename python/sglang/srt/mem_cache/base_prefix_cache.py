@@ -322,6 +322,17 @@ class BasePrefixCache(ABC, PrefixCacheTrait):
         """
         raise NotImplementedError()
 
+    def is_waiting_l2_prefetch(self, req_id: str) -> bool:
+        """Return whether a storage prefetch is waiting for L2 admission."""
+        return False
+
+    def can_retry_waiting_l2_prefetch(self, req_id: str) -> bool:
+        """Return whether a request may retry L2 admission now."""
+        return False
+
+    def cancel_waiting_l2_prefetch(self, req_id: str) -> None:
+        """Cancel a pending L2-admission wait."""
+
     def take_events(self):
         return []
 
