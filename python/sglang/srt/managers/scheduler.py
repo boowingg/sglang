@@ -2286,7 +2286,7 @@ class Scheduler(
         for tokenized_req in recv_req:
             self.handle_generate_request(tokenized_req)
 
-    def _prefetch_kvcache(self, req: Req):
+    def _prefetch_kvcache(self, req: Req) -> bool:
         if self.enable_hicache_storage:
             req.init_next_round_input(self.tree_cache, cow_mamba=False)
             last_host_node = req.last_host_node
@@ -2310,6 +2310,8 @@ class Scheduler(
                     last_hash,
                     prefix_keys,
                 )
+                return True
+        return False
 
     def _add_request_to_queue(self, req: Req, is_retracted: bool = False):
         if not self._set_or_validate_priority(req):
@@ -2895,6 +2897,17 @@ class Scheduler(
                     break
 
             if self.enable_hicache_storage:
+                if self.tree_cache.is_waiting_l2_prefetch(req.rid):
+                    if not self.tree_cache.can_retry_waiting_l2_prefetch(req.rid):
+                        continue
+                    # WAITING_L2 does not pin its old host anchor. Re-run the
+                    # normal match path before allocating or issuing L3 I/O.
+                    attempted = self._prefetch_kvcache(req)
+                    if not attempted:
+                        self.tree_cache.cancel_waiting_l2_prefetch(req.rid)
+                    if self.tree_cache.is_waiting_l2_prefetch(req.rid):
+                        continue
+
                 prefetch_done = self.tree_cache.check_prefetch_progress(req.rid)
                 if not prefetch_done:
                     # skip staging requests that are ongoing prefetch

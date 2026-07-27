@@ -324,6 +324,7 @@ class TestHiRadixL1L2LeafReclaim(unittest.TestCase):
         cache.enable_storage = True
         cache.prefetch_threshold = 1
         cache.ongoing_prefetch = {}
+        cache.waiting_l2_prefetch_queue = OrderedDict()
         cache.evict_host = MagicMock(return_value=4)
         cache._get_extra_pools = MagicMock(return_value={})
 
