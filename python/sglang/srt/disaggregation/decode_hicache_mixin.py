@@ -123,10 +123,13 @@ class DecodeHiCachePreallocMixin:
                 else None
             )
             self.tree_cache.prefetch_from_storage(
-                req.rid, node, suffix, last_hash, prefix_keys
+                req.rid,
+                node,
+                suffix,
+                last_hash,
+                prefix_keys,
+                allow_wait=False,
             )
-            if self.tree_cache.is_waiting_l2_prefetch(req.rid):
-                self.tree_cache.cancel_waiting_l2_prefetch(req.rid)
             prefix_match.prefetch_registered = (
                 req.rid in self.tree_cache.ongoing_prefetch
             )

@@ -1438,6 +1438,7 @@ class AttachHiCacheStorageReqInput(BaseReq, kw_only=True):
     - backend-specific configs (e.g., mooncake master address)
     - prefetch-related knobs (prefetch_threshold, prefetch_timeout_*,
       prefetch_capacity_ratio, enable_l2_prefetch_queue,
+      l2_prefetch_wait_timeout,
       hicache_storage_pass_prefix_keys)
     """
 

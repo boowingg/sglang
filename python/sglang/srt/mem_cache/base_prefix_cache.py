@@ -327,7 +327,7 @@ class BasePrefixCache(ABC, PrefixCacheTrait):
         return False
 
     def can_retry_waiting_l2_prefetch(self, req_id: str) -> bool:
-        """Return whether a request may retry L2 admission now."""
+        """Return whether L2 capacity changed since this request last failed."""
         return False
 
     def cancel_waiting_l2_prefetch(self, req_id: str) -> None:

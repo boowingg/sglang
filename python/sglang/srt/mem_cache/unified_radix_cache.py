@@ -1876,6 +1876,8 @@ class UnifiedRadixCache(KVCacheEventMixin, BasePrefixCache):
         new_input_tokens: list[int],
         last_hash: Optional[str] = None,
         prefix_keys: Optional[list[str]] = None,
+        *,
+        allow_wait: bool = True,
     ) -> None:
         if not self.enable_storage or self.cache_controller is None:
             return

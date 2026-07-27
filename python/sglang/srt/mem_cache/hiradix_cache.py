@@ -8,6 +8,7 @@ import math
 import os
 import threading
 import time
+from dataclasses import dataclass
 from queue import Empty
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
@@ -72,9 +73,14 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_L2_ALLOCATION_RETRY_INITIAL_ROUNDS = 1
-_L2_ALLOCATION_RETRY_MAX_ROUNDS = 64
 _DEFAULT_ENABLE_L2_PREFETCH_QUEUE = True
+_DEFAULT_L2_PREFETCH_WAIT_TIMEOUT = 30.0
+
+
+@dataclass(slots=True)
+class _WaitingL2Prefetch:
+    enqueued_at: float
+    failed_capacity_generation: int
 
 
 class HiRadixCache(RadixCache):
@@ -130,6 +136,7 @@ class HiRadixCache(RadixCache):
             hicache_storage_pass_prefix_keys,
             prefetch_capacity_ratio,
             enable_l2_prefetch_queue,
+            l2_prefetch_wait_timeout,
         ) = self._parse_storage_backend_extra_config(
             server_args.hicache_storage_backend_extra_config
         )
@@ -191,6 +198,7 @@ class HiRadixCache(RadixCache):
             hicache_storage_pass_prefix_keys=hicache_storage_pass_prefix_keys,
             prefetch_capacity_ratio=prefetch_capacity_ratio,
             enable_l2_prefetch_queue=enable_l2_prefetch_queue,
+            l2_prefetch_wait_timeout=l2_prefetch_wait_timeout,
             enable_storage=self.enable_storage,
             enable_storage_metrics=self.enable_storage_metrics,
             extra_metric_labels=self.extra_metric_labels,
@@ -202,12 +210,10 @@ class HiRadixCache(RadixCache):
         self.ongoing_load_back = {}
         # record the ongoing prefetch requests
         self.ongoing_prefetch = {}
-        # Scheduler waiting_queue owns request order. This set only marks
+        # Scheduler waiting_queue owns request order. This dict only tracks
         # prefetches waiting for admission budget or allocatable L2 pages.
-        self.waiting_l2_prefetches: set[str] = set()
-        self._l2_retry_epoch = 0
-        self._l2_allocation_retry_after_epoch = 0
-        self._l2_allocation_retry_delay_rounds = 0
+        self.waiting_l2_prefetches: dict[str, _WaitingL2Prefetch] = {}
+        self._l2_capacity_generation = 0
         self.ongoing_backup = {}
         # track per-request tokens loaded from storage (L3 hits)
         # key: request_id, value: number of tokens actually loaded from storage
@@ -335,6 +341,7 @@ class HiRadixCache(RadixCache):
         hicache_storage_pass_prefix_keys: bool,
         prefetch_capacity_ratio: float,
         enable_l2_prefetch_queue: bool,
+        l2_prefetch_wait_timeout: float,
         enable_storage: bool,
         enable_storage_metrics: bool,
         extra_metric_labels: Optional[Dict[str, str]],
@@ -345,19 +352,30 @@ class HiRadixCache(RadixCache):
         self.hicache_storage_pass_prefix_keys = hicache_storage_pass_prefix_keys
         self.prefetch_capacity_ratio = prefetch_capacity_ratio
         self.enable_l2_prefetch_queue = enable_l2_prefetch_queue
+        self.l2_prefetch_wait_timeout = l2_prefetch_wait_timeout
         self.enable_storage_metrics = enable_storage_metrics
+        previous_capacity_limit = getattr(
+            self.cache_controller, "prefetch_capacity_limit", None
+        )
         self.cache_controller.set_prefetch_capacity_ratio(prefetch_capacity_ratio)
 
-        if not enable_l2_prefetch_queue and hasattr(self, "waiting_l2_prefetches"):
-            self.waiting_l2_prefetches.clear()
-            self._reset_l2_allocation_retry_backoff()
+        if hasattr(self, "waiting_l2_prefetches"):
+            if not enable_l2_prefetch_queue:
+                self.waiting_l2_prefetches.clear()
+            elif (
+                previous_capacity_limit is not None
+                and self.cache_controller.prefetch_capacity_limit
+                > previous_capacity_limit
+            ):
+                self._advance_l2_capacity_generation()
 
         logger.info(
             "HiCache L3 prefetch config: capacity_ratio=%.3f, "
-            "capacity_tokens=%d, l2_waiting_queue=%s",
+            "capacity_tokens=%d, l2_waiting_queue=%s, l2_wait_timeout_s=%.1f",
             prefetch_capacity_ratio,
             self.cache_controller.prefetch_capacity_limit,
             enable_l2_prefetch_queue,
+            l2_prefetch_wait_timeout,
         )
 
         if self.enable_storage_metrics:
@@ -480,6 +498,7 @@ class HiRadixCache(RadixCache):
                 hicache_storage_pass_prefix_keys,
                 prefetch_capacity_ratio,
                 enable_l2_prefetch_queue,
+                l2_prefetch_wait_timeout,
             ) = self._parse_storage_backend_extra_config(
                 storage_backend_extra_config_json
             )
@@ -511,6 +530,7 @@ class HiRadixCache(RadixCache):
             hicache_storage_pass_prefix_keys=hicache_storage_pass_prefix_keys,
             prefetch_capacity_ratio=prefetch_capacity_ratio,
             enable_l2_prefetch_queue=enable_l2_prefetch_queue,
+            l2_prefetch_wait_timeout=l2_prefetch_wait_timeout,
             enable_storage=True,
             enable_storage_metrics=self._enable_metrics_flag,
             extra_metric_labels=self.extra_metric_labels,
@@ -559,7 +579,7 @@ class HiRadixCache(RadixCache):
         # drop the host protection on the matched prefix node.
         try:
             self.waiting_l2_prefetches.clear()
-            self._reset_l2_allocation_retry_backoff()
+            self._l2_capacity_generation = 0
             for req_id, info in list(self.ongoing_prefetch.items()):
                 try:
                     last_host_node, token_ids, host_indices, _operation = info
@@ -640,6 +660,7 @@ class HiRadixCache(RadixCache):
                 yield item
 
         def _drain_revoke():
+            released_prefetch_capacity = False
             for req_id in _drain_queue(cc.prefetch_revoke_queue, n_revoke):
                 info = self.ongoing_prefetch.pop(req_id, None)
                 if info is not None:
@@ -648,6 +669,9 @@ class HiRadixCache(RadixCache):
                     cc.prefetch_tokens_occupied -= len(token_ids)
                     if cc.prefetch_tokens_occupied < 0:
                         cc.prefetch_tokens_occupied = 0
+                    released_prefetch_capacity = True
+            if released_prefetch_capacity:
+                self._advance_l2_capacity_generation()
 
         def _drain_backup():
             for operation in _drain_queue(cc.ack_backup_queue, n_backup):
@@ -667,7 +691,7 @@ class HiRadixCache(RadixCache):
             if host_indices_list:
                 host_indices = torch.cat(host_indices_list, dim=0)
                 cc.mem_pool_host.free(host_indices)
-                self._reset_l2_allocation_retry_backoff()
+                self._advance_l2_capacity_generation()
 
         _drain_revoke()
         _drain_backup()
@@ -690,6 +714,7 @@ class HiRadixCache(RadixCache):
                 hicache_storage_pass_prefix_keys,
                 prefetch_capacity_ratio,
                 enable_l2_prefetch_queue,
+                l2_prefetch_wait_timeout,
             )
         """
         # Parse extra config if provided. Extra config can be a JSON string or a json/toml/yaml file path prefixed with "@".
@@ -743,6 +768,9 @@ class HiRadixCache(RadixCache):
         enable_l2_prefetch_queue = extra_config.pop(
             "enable_l2_prefetch_queue", _DEFAULT_ENABLE_L2_PREFETCH_QUEUE
         )
+        l2_prefetch_wait_timeout = extra_config.pop(
+            "l2_prefetch_wait_timeout", _DEFAULT_L2_PREFETCH_WAIT_TIMEOUT
+        )
 
         if not isinstance(prefetch_threshold, int):
             raise ValueError(
@@ -780,6 +808,16 @@ class HiRadixCache(RadixCache):
                 "enable_l2_prefetch_queue must be bool, got "
                 f"{type(enable_l2_prefetch_queue).__name__}"
             )
+        if (
+            isinstance(l2_prefetch_wait_timeout, bool)
+            or not isinstance(l2_prefetch_wait_timeout, (int, float))
+            or not math.isfinite(l2_prefetch_wait_timeout)
+            or l2_prefetch_wait_timeout <= 0
+        ):
+            raise ValueError(
+                "l2_prefetch_wait_timeout must be a finite number greater than 0, "
+                f"got {l2_prefetch_wait_timeout!r}"
+            )
 
         prefetch_timeout_config = PrefetchTimeoutConfig(
             base=float(prefetch_timeout_base),
@@ -794,6 +832,7 @@ class HiRadixCache(RadixCache):
             hicache_storage_pass_prefix_keys,
             float(prefetch_capacity_ratio),
             enable_l2_prefetch_queue,
+            float(l2_prefetch_wait_timeout),
         )
 
     def reset(self):
@@ -803,8 +842,7 @@ class HiRadixCache(RadixCache):
         # Clear per-request tracking dicts
         self.prefetch_loaded_tokens_by_reqid.clear()
         self.waiting_l2_prefetches.clear()
-        self._l2_retry_epoch = 0
-        self._reset_l2_allocation_retry_backoff()
+        self._l2_capacity_generation = 0
         self.evictable_host_leaves.clear()
         super().reset()
 
@@ -1470,7 +1508,6 @@ class HiRadixCache(RadixCache):
         self.writing_check()
 
     def check_hicache_events(self):
-        self._l2_retry_epoch += 1
         # Reap the previous round's PP-sync sends before issuing new ones.
         self._drain_async_work()
         self.writing_check()
@@ -1494,12 +1531,19 @@ class HiRadixCache(RadixCache):
                 cc.prefetch_revoke_queue.qsize(),
                 cc.ack_backup_queue.qsize(),
                 cc.host_mem_release_queue.qsize(),
+                int(not self._oldest_l2_wait_expired()),
             ],
             dtype=torch.int,
         )
         self._all_reduce_attn_groups(qsizes, torch.distributed.ReduceOp.MIN)
 
-        n_revoke, n_backup, n_release = map(int, qsizes.tolist())
+        n_revoke, n_backup, n_release, oldest_wait_not_expired = map(
+            int, qsizes.tolist()
+        )
+        if not oldest_wait_not_expired:
+            # All ranks expire the same oldest waiter when any rank reaches its
+            # deadline, keeping scheduler admission decisions aligned.
+            self._expire_oldest_l2_waiter()
         self._drain_storage_control_queues_impl(
             n_revoke=n_revoke,
             n_backup=n_backup,
@@ -1559,44 +1603,68 @@ class HiRadixCache(RadixCache):
         if not self.enable_l2_prefetch_queue:
             return
         if req_id not in self.ongoing_prefetch:
-            self.waiting_l2_prefetches.add(req_id)
+            state = self.waiting_l2_prefetches.setdefault(
+                req_id,
+                _WaitingL2Prefetch(
+                    enqueued_at=time.monotonic(),
+                    failed_capacity_generation=self._l2_capacity_generation,
+                ),
+            )
+            state.failed_capacity_generation = self._l2_capacity_generation
 
     def is_waiting_l2_prefetch(self, req_id: str) -> bool:
         return self.enable_l2_prefetch_queue and req_id in self.waiting_l2_prefetches
 
     def can_retry_waiting_l2_prefetch(self, req_id: str) -> bool:
-        return (
-            self.enable_storage
-            and self.enable_l2_prefetch_queue
-            and self.is_waiting_l2_prefetch(req_id)
-            and not self._l2_prefetch_admission_limited()
-            and self._l2_retry_epoch >= self._l2_allocation_retry_after_epoch
-        )
+        if not self.enable_storage or not self.enable_l2_prefetch_queue:
+            return False
+
+        state = self.waiting_l2_prefetches.get(req_id)
+        if state is None:
+            return False
+
+        # Each waiter probes allocation at most once until L2 availability changes.
+        return state.failed_capacity_generation != self._l2_capacity_generation
 
     def cancel_waiting_l2_prefetch(self, req_id: str) -> None:
-        self.waiting_l2_prefetches.discard(req_id)
-        if not self.waiting_l2_prefetches:
-            self._reset_l2_allocation_retry_backoff()
+        if self.waiting_l2_prefetches.pop(req_id, None) is not None:
+            self._advance_l2_capacity_generation()
 
     def _defer_l2_allocation_retry(self, req_id: str) -> None:
         if not self.enable_l2_prefetch_queue:
             self.cancel_waiting_l2_prefetch(req_id)
             return
         self._enqueue_waiting_l2_prefetch(req_id)
-        delay_rounds = max(
-            _L2_ALLOCATION_RETRY_INITIAL_ROUNDS,
-            self._l2_allocation_retry_delay_rounds * 2,
-        )
-        self._l2_allocation_retry_delay_rounds = min(
-            delay_rounds, _L2_ALLOCATION_RETRY_MAX_ROUNDS
-        )
-        self._l2_allocation_retry_after_epoch = (
-            self._l2_retry_epoch + self._l2_allocation_retry_delay_rounds
+
+    def _advance_l2_capacity_generation(self) -> None:
+        if self.waiting_l2_prefetches:
+            self._l2_capacity_generation += 1
+
+    def _oldest_l2_waiter(self) -> Optional[Tuple[str, _WaitingL2Prefetch]]:
+        if not self.waiting_l2_prefetches:
+            return None
+        req_id = next(iter(self.waiting_l2_prefetches))
+        return req_id, self.waiting_l2_prefetches[req_id]
+
+    def _oldest_l2_wait_expired(self) -> bool:
+        waiter = self._oldest_l2_waiter()
+        return waiter is not None and (
+            time.monotonic() - waiter[1].enqueued_at >= self.l2_prefetch_wait_timeout
         )
 
-    def _reset_l2_allocation_retry_backoff(self) -> None:
-        self._l2_allocation_retry_after_epoch = 0
-        self._l2_allocation_retry_delay_rounds = 0
+    def _expire_oldest_l2_waiter(self) -> None:
+        waiter = self._oldest_l2_waiter()
+        if waiter is None:
+            return
+        req_id, state = waiter
+        waited = time.monotonic() - state.enqueued_at
+        self.cancel_waiting_l2_prefetch(req_id)
+        logger.debug(
+            "HiCache L2 prefetch wait timed out for request %s after %.2fs; "
+            "falling back to recomputation",
+            req_id,
+            waited,
+        )
 
     def _l2_prefetch_admission_limited(self) -> bool:
         if not self.cache_controller.prefetch_rate_limited():
@@ -1656,7 +1724,7 @@ class HiRadixCache(RadixCache):
         last_host_node.release_host()
         del self.ongoing_prefetch[req_id]
         self.cache_controller.prefetch_tokens_occupied -= len(prefetch_key)
-        self._reset_l2_allocation_retry_backoff()
+        self._advance_l2_capacity_generation()
 
         # Track tokens actually loaded from storage for this request (L3 hits)
         loaded_from_storage = min_completed_tokens - matched_length
@@ -1721,6 +1789,45 @@ class HiRadixCache(RadixCache):
             host_hit_length=host_hit_length,
         )
 
+    def _l2_prefetch_blocked_on_any_rank(self, local_blocked: bool) -> bool:
+        blocked = torch.tensor(int(local_blocked), dtype=torch.int)
+        self._all_reduce_attn_groups(blocked, torch.distributed.ReduceOp.MAX)
+        return bool(blocked.item())
+
+    def _allocate_l2_prefetch(self, requested_tokens: int) -> Optional[torch.Tensor]:
+        host_pool = self.cache_controller.mem_pool_host
+        host_indices = host_pool.alloc(requested_tokens)
+        if host_indices is None:
+            self.evict_host(requested_tokens)
+            host_indices = host_pool.alloc(requested_tokens)
+
+        if host_indices is None:
+            available_tokens = min(requested_tokens, host_pool.available_size())
+            available_tokens -= available_tokens % self.page_size
+            if available_tokens >= self.prefetch_threshold:
+                host_indices = host_pool.alloc(available_tokens)
+
+        local_tokens = len(host_indices) if host_indices is not None else 0
+        common_tokens = torch.tensor(local_tokens, dtype=torch.int)
+        try:
+            self._all_reduce_attn_groups(common_tokens, torch.distributed.ReduceOp.MIN)
+        except Exception:
+            if host_indices is not None:
+                host_pool.free(host_indices)
+            raise
+
+        allocated_tokens = int(common_tokens.item())
+        allocated_tokens -= allocated_tokens % self.page_size
+        if allocated_tokens < self.prefetch_threshold:
+            if host_indices is not None:
+                host_pool.free(host_indices)
+            return None
+
+        if allocated_tokens < local_tokens:
+            host_pool.free(host_indices[allocated_tokens:])
+            host_indices = host_indices[:allocated_tokens]
+        return host_indices
+
     def prefetch_from_storage(
         self,
         req_id: str,
@@ -1728,6 +1835,8 @@ class HiRadixCache(RadixCache):
         new_input_tokens: List[int],
         last_hash: Optional[str] = None,
         prefix_keys: Optional[List[str]] = None,
+        *,
+        allow_wait: bool = True,
     ):
         prefetch_key = RadixKey(
             new_input_tokens,
@@ -1742,6 +1851,7 @@ class HiRadixCache(RadixCache):
             return
 
         if req_id in self.ongoing_prefetch:
+            self.cancel_waiting_l2_prefetch(req_id)
             return
 
         was_waiting = self.is_waiting_l2_prefetch(req_id)
@@ -1750,32 +1860,32 @@ class HiRadixCache(RadixCache):
             and not was_waiting
             and bool(self.waiting_l2_prefetches)
         )
-        if waits_behind_existing or self._l2_prefetch_admission_limited():
-            self._enqueue_waiting_l2_prefetch(req_id)
+        admission_blocked = self._l2_prefetch_blocked_on_any_rank(
+            waits_behind_existing or self._l2_prefetch_admission_limited()
+        )
+        if admission_blocked:
+            if allow_wait:
+                self._enqueue_waiting_l2_prefetch(req_id)
+            else:
+                self.cancel_waiting_l2_prefetch(req_id)
             return
 
         last_host_node.protect_host()
-        host_indices = self.cache_controller.mem_pool_host.alloc(prefetch_length)
+        try:
+            host_indices = self._allocate_l2_prefetch(prefetch_length)
+        except Exception:
+            last_host_node.release_host()
+            self.cancel_waiting_l2_prefetch(req_id)
+            raise
         if host_indices is None:
-            self.evict_host(prefetch_length)
-            host_indices = self.cache_controller.mem_pool_host.alloc(prefetch_length)
-        if host_indices is None:
-            available_size = self.cache_controller.mem_pool_host.available_size()
-            prefetch_length = available_size - (available_size % self.page_size)
-            if prefetch_length >= self.prefetch_threshold:
-                prefetch_key = prefetch_key[:prefetch_length]
-                host_indices = self.cache_controller.mem_pool_host.alloc(
-                    prefetch_length
-                )
-                if host_indices is None:
-                    last_host_node.release_host()
-                    self._defer_l2_allocation_retry(req_id)
-                    return
-            else:
-                last_host_node.release_host()
-                # no sufficient host memory for prefetch
+            last_host_node.release_host()
+            if allow_wait:
                 self._defer_l2_allocation_retry(req_id)
-                return
+            else:
+                self.cancel_waiting_l2_prefetch(req_id)
+            return
+
+        prefetch_key = prefetch_key[: len(host_indices)]
         try:
             operation = self.cache_controller.prefetch(
                 req_id,
@@ -1798,10 +1908,8 @@ class HiRadixCache(RadixCache):
                 logger.exception(
                     "Failed to release host protection for prefetch %s", req_id
                 )
-            self._reset_l2_allocation_retry_backoff()
             self.cancel_waiting_l2_prefetch(req_id)
             raise
-        self._reset_l2_allocation_retry_backoff()
         self.cancel_waiting_l2_prefetch(req_id)
         self.ongoing_prefetch[req_id] = (
             last_host_node,
@@ -2015,3 +2123,4 @@ class HiRadixCache(RadixCache):
         del self.ongoing_prefetch[rid]
         self.cache_controller.append_host_mem_release(host_indices[:completed_tokens])
         self.cache_controller.prefetch_tokens_occupied -= len(prefetch_key)
+        self._advance_l2_capacity_generation()
