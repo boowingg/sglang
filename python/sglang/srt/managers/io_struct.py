@@ -1436,7 +1436,9 @@ class AttachHiCacheStorageReqInput(BaseReq, kw_only=True):
 
     Note: `hicache_storage_backend_extra_config_json` is a JSON string. It may contain both:
     - backend-specific configs (e.g., mooncake master address)
-    - prefetch-related knobs (prefetch_threshold, prefetch_timeout_*, hicache_storage_pass_prefix_keys)
+    - prefetch-related knobs (prefetch_threshold, prefetch_timeout_*,
+      prefetch_capacity_ratio, enable_l2_prefetch_queue,
+      hicache_storage_pass_prefix_keys)
     """
 
     hicache_storage_backend: str

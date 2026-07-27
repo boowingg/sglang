@@ -100,7 +100,7 @@ curl -s -X PUT http://127.0.0.1:30000/hicache/storage-backend \
   -H 'Content-Type: application/json' \
   -d '{
     "hicache_storage_backend": "mooncake",
-    "hicache_storage_backend_extra_config_json": "{\"master_server_address\":\"127.0.0.1:50051\",\"protocol\":\"tcp\",\"global_segment_size\":\"4gb\",\"prefetch_threshold\":256}",
+    "hicache_storage_backend_extra_config_json": "{\"master_server_address\":\"127.0.0.1:50051\",\"protocol\":\"tcp\",\"global_segment_size\":\"4gb\",\"prefetch_threshold\":256,\"prefetch_capacity_ratio\":0.75,\"enable_l2_prefetch_queue\":true}",
     "hicache_storage_prefetch_policy": "timeout"
   }'
 ```
@@ -109,7 +109,7 @@ Notes:
 
 - `hicache_storage_backend_extra_config_json` can include both:
   - **Backend configuration** (e.g., Mooncake master/metadata/protocol, etc.)
-  - **Prefetch configuration** (`prefetch_threshold`, `prefetch_timeout_base`, `prefetch_timeout_per_ki_token`, `prefetch_timeout_max`, `hicache_storage_pass_prefix_keys`)
+  - **Prefetch configuration** (`prefetch_threshold`, `prefetch_timeout_base`, `prefetch_timeout_per_ki_token`, `prefetch_timeout_max`, `prefetch_capacity_ratio`, `enable_l2_prefetch_queue`, `hicache_storage_pass_prefix_keys`)
 
 ### 3.3 Detach (disable) the storage backend
 

@@ -14,6 +14,7 @@ limitations under the License.
 """
 
 import logging
+import math
 import threading
 import time
 from queue import Empty, Queue
@@ -200,6 +201,7 @@ class PrefetchOperation(StorageOperation):
 
 
 class HiCacheController:
+    DEFAULT_PREFETCH_CAPACITY_RATIO = 0.5
 
     def __init__(
         self,
@@ -234,6 +236,10 @@ class HiCacheController:
         self.mem_pool_host = mem_pool_host
         self.write_policy = write_policy
         self.page_size = page_size
+        self.prefetch_capacity_ratio = self.DEFAULT_PREFETCH_CAPACITY_RATIO
+        self.prefetch_capacity_limit = 0
+        self.prefetch_tokens_occupied = 0
+        self.set_prefetch_capacity_ratio(self.prefetch_capacity_ratio)
         self.io_backend = io_backend
         self.enable_storage = False
         self.storage_backend = None
@@ -456,9 +462,9 @@ class HiCacheController:
             self.enable_storage = True
             # todo: threshold policy for prefetching
             self.prefetch_threshold = max(prefetch_threshold, self.page_size)
-            # Budget speculative prefetch at half the host pool, leaving the rest for the write-back staging path.
-            self.prefetch_capacity_limit = int(0.5 * self.mem_pool_host.size)
-            # tracking the number of tokens locked in prefetching, updated by the main scheduler thread
+            self.set_prefetch_capacity_ratio(self.prefetch_capacity_ratio)
+            # Tracking the number of tokens locked in prefetching, updated by the
+            # main scheduler thread.
             self.prefetch_tokens_occupied = 0
 
             # Use dedicated gloo groups so storage prefetch sync is isolated
@@ -989,6 +995,22 @@ class HiCacheController:
             return True
         # todo: more sophisticated rate limiting based on storage backend performance
         return False
+
+    def set_prefetch_capacity_ratio(self, ratio: float) -> None:
+        if (
+            isinstance(ratio, bool)
+            or not isinstance(ratio, (int, float))
+            or not math.isfinite(ratio)
+            or not 0 < ratio <= 1
+        ):
+            raise ValueError(
+                f"prefetch_capacity_ratio must be a finite number in (0, 1], got {ratio!r}"
+            )
+
+        self.prefetch_capacity_ratio = float(ratio)
+        self.prefetch_capacity_limit = int(
+            self.prefetch_capacity_ratio * self.mem_pool_host.size
+        )
 
     def _storage_hit_query(self, operation) -> tuple[list[str], int]:
         last_hash = operation.last_hash

@@ -4,6 +4,7 @@ import atexit
 import heapq
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -73,6 +74,7 @@ logger = logging.getLogger(__name__)
 
 _L2_ALLOCATION_RETRY_INITIAL_ROUNDS = 1
 _L2_ALLOCATION_RETRY_MAX_ROUNDS = 64
+_DEFAULT_ENABLE_L2_PREFETCH_QUEUE = True
 
 
 class HiRadixCache(RadixCache):
@@ -126,6 +128,8 @@ class HiRadixCache(RadixCache):
             prefetch_threshold,
             prefetch_timeout_config,
             hicache_storage_pass_prefix_keys,
+            prefetch_capacity_ratio,
+            enable_l2_prefetch_queue,
         ) = self._parse_storage_backend_extra_config(
             server_args.hicache_storage_backend_extra_config
         )
@@ -185,6 +189,8 @@ class HiRadixCache(RadixCache):
             prefetch_threshold=prefetch_threshold,
             prefetch_timeout_config=prefetch_timeout_config,
             hicache_storage_pass_prefix_keys=hicache_storage_pass_prefix_keys,
+            prefetch_capacity_ratio=prefetch_capacity_ratio,
+            enable_l2_prefetch_queue=enable_l2_prefetch_queue,
             enable_storage=self.enable_storage,
             enable_storage_metrics=self.enable_storage_metrics,
             extra_metric_labels=self.extra_metric_labels,
@@ -327,6 +333,8 @@ class HiRadixCache(RadixCache):
         prefetch_threshold: int,
         prefetch_timeout_config: PrefetchTimeoutConfig,
         hicache_storage_pass_prefix_keys: bool,
+        prefetch_capacity_ratio: float,
+        enable_l2_prefetch_queue: bool,
         enable_storage: bool,
         enable_storage_metrics: bool,
         extra_metric_labels: Optional[Dict[str, str]],
@@ -335,7 +343,22 @@ class HiRadixCache(RadixCache):
         self.prefetch_threshold = prefetch_threshold
         self.prefetch_timeout_config = prefetch_timeout_config
         self.hicache_storage_pass_prefix_keys = hicache_storage_pass_prefix_keys
+        self.prefetch_capacity_ratio = prefetch_capacity_ratio
+        self.enable_l2_prefetch_queue = enable_l2_prefetch_queue
         self.enable_storage_metrics = enable_storage_metrics
+        self.cache_controller.set_prefetch_capacity_ratio(prefetch_capacity_ratio)
+
+        if not enable_l2_prefetch_queue and hasattr(self, "waiting_l2_prefetches"):
+            self.waiting_l2_prefetches.clear()
+            self._reset_l2_allocation_retry_backoff()
+
+        logger.info(
+            "HiCache L3 prefetch config: capacity_ratio=%.3f, "
+            "capacity_tokens=%d, l2_waiting_queue=%s",
+            prefetch_capacity_ratio,
+            self.cache_controller.prefetch_capacity_limit,
+            enable_l2_prefetch_queue,
+        )
 
         if self.enable_storage_metrics:
             attn_cp_rank, attn_cp_size = (
@@ -455,6 +478,8 @@ class HiRadixCache(RadixCache):
                 prefetch_threshold,
                 prefetch_timeout_config,
                 hicache_storage_pass_prefix_keys,
+                prefetch_capacity_ratio,
+                enable_l2_prefetch_queue,
             ) = self._parse_storage_backend_extra_config(
                 storage_backend_extra_config_json
             )
@@ -484,6 +509,8 @@ class HiRadixCache(RadixCache):
             prefetch_threshold=prefetch_threshold,
             prefetch_timeout_config=prefetch_timeout_config,
             hicache_storage_pass_prefix_keys=hicache_storage_pass_prefix_keys,
+            prefetch_capacity_ratio=prefetch_capacity_ratio,
+            enable_l2_prefetch_queue=enable_l2_prefetch_queue,
             enable_storage=True,
             enable_storage_metrics=self._enable_metrics_flag,
             extra_metric_labels=self.extra_metric_labels,
@@ -656,7 +683,14 @@ class HiRadixCache(RadixCache):
             storage_backend_extra_config: JSON string containing extra configuration
 
         Returns:
-            tuple: (extra_config_dict, prefetch_threshold, prefetch_timeout_config, hicache_storage_pass_prefix_keys)
+            tuple: (
+                extra_config_dict,
+                prefetch_threshold,
+                prefetch_timeout_config,
+                hicache_storage_pass_prefix_keys,
+                prefetch_capacity_ratio,
+                enable_l2_prefetch_queue,
+            )
         """
         # Parse extra config if provided. Extra config can be a JSON string or a json/toml/yaml file path prefixed with "@".
         extra_config = {}
@@ -702,6 +736,13 @@ class HiRadixCache(RadixCache):
         hicache_storage_pass_prefix_keys = extra_config.pop(
             "hicache_storage_pass_prefix_keys", False
         )
+        prefetch_capacity_ratio = extra_config.pop(
+            "prefetch_capacity_ratio",
+            HiCacheController.DEFAULT_PREFETCH_CAPACITY_RATIO,
+        )
+        enable_l2_prefetch_queue = extra_config.pop(
+            "enable_l2_prefetch_queue", _DEFAULT_ENABLE_L2_PREFETCH_QUEUE
+        )
 
         if not isinstance(prefetch_threshold, int):
             raise ValueError(
@@ -724,6 +765,21 @@ class HiRadixCache(RadixCache):
                 "hicache_storage_pass_prefix_keys must be bool, got "
                 f"{type(hicache_storage_pass_prefix_keys).__name__}"
             )
+        if (
+            isinstance(prefetch_capacity_ratio, bool)
+            or not isinstance(prefetch_capacity_ratio, (int, float))
+            or not math.isfinite(prefetch_capacity_ratio)
+            or not 0 < prefetch_capacity_ratio <= 1
+        ):
+            raise ValueError(
+                "prefetch_capacity_ratio must be a finite number in (0, 1], got "
+                f"{prefetch_capacity_ratio!r}"
+            )
+        if not isinstance(enable_l2_prefetch_queue, bool):
+            raise ValueError(
+                "enable_l2_prefetch_queue must be bool, got "
+                f"{type(enable_l2_prefetch_queue).__name__}"
+            )
 
         prefetch_timeout_config = PrefetchTimeoutConfig(
             base=float(prefetch_timeout_base),
@@ -736,6 +792,8 @@ class HiRadixCache(RadixCache):
             prefetch_threshold,
             prefetch_timeout_config,
             hicache_storage_pass_prefix_keys,
+            float(prefetch_capacity_ratio),
+            enable_l2_prefetch_queue,
         )
 
     def reset(self):
@@ -1498,15 +1556,18 @@ class HiRadixCache(RadixCache):
         return can_terminate
 
     def _enqueue_waiting_l2_prefetch(self, req_id: str) -> None:
+        if not self.enable_l2_prefetch_queue:
+            return
         if req_id not in self.ongoing_prefetch:
             self.waiting_l2_prefetches.add(req_id)
 
     def is_waiting_l2_prefetch(self, req_id: str) -> bool:
-        return req_id in self.waiting_l2_prefetches
+        return self.enable_l2_prefetch_queue and req_id in self.waiting_l2_prefetches
 
     def can_retry_waiting_l2_prefetch(self, req_id: str) -> bool:
         return (
             self.enable_storage
+            and self.enable_l2_prefetch_queue
             and self.is_waiting_l2_prefetch(req_id)
             and not self._l2_prefetch_admission_limited()
             and self._l2_retry_epoch >= self._l2_allocation_retry_after_epoch
@@ -1518,6 +1579,9 @@ class HiRadixCache(RadixCache):
             self._reset_l2_allocation_retry_backoff()
 
     def _defer_l2_allocation_retry(self, req_id: str) -> None:
+        if not self.enable_l2_prefetch_queue:
+            self.cancel_waiting_l2_prefetch(req_id)
+            return
         self._enqueue_waiting_l2_prefetch(req_id)
         delay_rounds = max(
             _L2_ALLOCATION_RETRY_INITIAL_ROUNDS,
@@ -1681,10 +1745,12 @@ class HiRadixCache(RadixCache):
             return
 
         was_waiting = self.is_waiting_l2_prefetch(req_id)
-        if (
-            (not was_waiting and self.waiting_l2_prefetches)
-            or self._l2_prefetch_admission_limited()
-        ):
+        waits_behind_existing = (
+            self.enable_l2_prefetch_queue
+            and not was_waiting
+            and bool(self.waiting_l2_prefetches)
+        )
+        if waits_behind_existing or self._l2_prefetch_admission_limited():
             self._enqueue_waiting_l2_prefetch(req_id)
             return
 

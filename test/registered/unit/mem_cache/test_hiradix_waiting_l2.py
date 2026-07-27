@@ -1,3 +1,4 @@
+import json
 import unittest
 from array import array
 from types import SimpleNamespace
@@ -9,6 +10,7 @@ from sglang.srt.disaggregation.decode_hicache_mixin import (
     DecodeHiCachePreallocMixin,
     DecodePrefixMatch,
 )
+from sglang.srt.managers.cache_controller import HiCacheController
 from sglang.srt.mem_cache.hiradix_cache import HiRadixCache
 from sglang.srt.mem_cache.radix_cache import RadixKey, TreeNode
 from sglang.test.ci.ci_register import register_cpu_ci
@@ -22,6 +24,7 @@ class TestHiRadixWaitingL2(unittest.TestCase):
         cache.page_size = 1
         cache.is_eagle = False
         cache.enable_storage = True
+        cache.enable_l2_prefetch_queue = True
         cache.prefetch_threshold = 1
         cache.ongoing_prefetch = {}
         cache.waiting_l2_prefetches = set()
@@ -64,9 +67,7 @@ class TestHiRadixWaitingL2(unittest.TestCase):
 
         controller.prefetch_rate_limited.return_value = False
         controller.prefetch_tokens_occupied = 0
-        controller.mem_pool_host.alloc.return_value = torch.arange(
-            2, dtype=torch.int64
-        )
+        controller.mem_pool_host.alloc.return_value = torch.arange(2, dtype=torch.int64)
         controller.prefetch.return_value = MagicMock()
         cache._l2_allocation_retry_delay_rounds = 8
         cache._l2_allocation_retry_after_epoch = 0
@@ -134,9 +135,7 @@ class TestHiRadixWaitingL2(unittest.TestCase):
 
         self.assertGreater(first_delay, 0)
         self.assertGreater(cache._l2_allocation_retry_delay_rounds, first_delay)
-        self.assertGreater(
-            cache._l2_allocation_retry_after_epoch, first_retry_epoch
-        )
+        self.assertGreater(cache._l2_allocation_retry_after_epoch, first_retry_epoch)
         self.assertFalse(cache.can_retry_waiting_l2_prefetch("second"))
         controller.mem_pool_host.alloc.assert_not_called()
 
@@ -193,9 +192,7 @@ class TestHiRadixWaitingL2(unittest.TestCase):
         controller.prefetch_rate_limited.return_value = True
         controller.prefetch_capacity_limit = 0
         controller.prefetch_tokens_occupied = 0
-        controller.mem_pool_host.alloc.return_value = torch.arange(
-            1, dtype=torch.int64
-        )
+        controller.mem_pool_host.alloc.return_value = torch.arange(1, dtype=torch.int64)
         controller.prefetch.return_value = MagicMock()
 
         cache.prefetch_from_storage("req", anchor, [1])
@@ -217,6 +214,117 @@ class TestHiRadixWaitingL2(unittest.TestCase):
         self.assertEqual(anchor.host_ref_counter, 0)
         self.assertFalse(cache.is_waiting_l2_prefetch("req"))
         self.assertNotIn("req", cache.ongoing_prefetch)
+
+    def test_disabled_queue_drops_rate_limited_prefetch(self):
+        cache, controller, anchor = self._make_cache()
+        cache.enable_l2_prefetch_queue = False
+        controller.prefetch_rate_limited.return_value = True
+        controller.prefetch_tokens_occupied = 1
+
+        cache.prefetch_from_storage("req", anchor, [1, 2])
+
+        self.assertFalse(cache.is_waiting_l2_prefetch("req"))
+        self.assertNotIn("req", cache.ongoing_prefetch)
+        self.assertEqual(anchor.host_ref_counter, 0)
+        controller.mem_pool_host.alloc.assert_not_called()
+        controller.prefetch.assert_not_called()
+
+    def test_disabled_queue_drops_failed_allocation(self):
+        cache, controller, anchor = self._make_cache()
+        cache.enable_l2_prefetch_queue = False
+        controller.mem_pool_host.alloc.side_effect = [None, None]
+        controller.mem_pool_host.available_size.return_value = 0
+
+        cache.prefetch_from_storage("req", anchor, [1, 2])
+
+        self.assertFalse(cache.is_waiting_l2_prefetch("req"))
+        self.assertEqual(cache._l2_allocation_retry_delay_rounds, 0)
+        self.assertEqual(anchor.host_ref_counter, 0)
+        controller.prefetch.assert_not_called()
+
+    def test_parse_prefetch_capacity_and_queue_config(self):
+        cache, _, _ = self._make_cache()
+        (
+            backend_config,
+            _,
+            _,
+            _,
+            prefetch_capacity_ratio,
+            enable_l2_prefetch_queue,
+        ) = cache._parse_storage_backend_extra_config(
+            json.dumps(
+                {
+                    "prefetch_capacity_ratio": 0.75,
+                    "enable_l2_prefetch_queue": False,
+                    "backend_option": "preserved",
+                }
+            )
+        )
+
+        self.assertEqual(prefetch_capacity_ratio, 0.75)
+        self.assertFalse(enable_l2_prefetch_queue)
+        self.assertEqual(backend_config, {"backend_option": "preserved"})
+
+    def test_parse_prefetch_capacity_defaults(self):
+        cache, _, _ = self._make_cache()
+
+        parsed = cache._parse_storage_backend_extra_config(None)
+
+        self.assertEqual(parsed[4], 0.5)
+        self.assertTrue(parsed[5])
+
+    def test_reject_invalid_prefetch_capacity_ratio(self):
+        cache, _, _ = self._make_cache()
+        invalid_values = [0, -0.1, 1.1, True, "0.5", float("inf"), float("nan")]
+
+        for value in invalid_values:
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "prefetch_capacity_ratio"):
+                    cache._parse_storage_backend_extra_config(
+                        json.dumps({"prefetch_capacity_ratio": value})
+                    )
+
+    def test_reject_non_boolean_queue_config(self):
+        cache, _, _ = self._make_cache()
+
+        with self.assertRaisesRegex(ValueError, "enable_l2_prefetch_queue"):
+            cache._parse_storage_backend_extra_config(
+                json.dumps({"enable_l2_prefetch_queue": 1})
+            )
+
+    def test_runtime_config_applies_ratio_and_disables_queue(self):
+        cache, controller, _ = self._make_cache()
+        cache.waiting_l2_prefetches.add("req")
+        controller.prefetch_capacity_limit = 75
+        timeout_config = cache._parse_storage_backend_extra_config(None)[2]
+
+        cache._apply_storage_runtime_config(
+            storage_backend="test",
+            prefetch_threshold=256,
+            prefetch_timeout_config=timeout_config,
+            hicache_storage_pass_prefix_keys=False,
+            prefetch_capacity_ratio=0.75,
+            enable_l2_prefetch_queue=False,
+            enable_storage=False,
+            enable_storage_metrics=False,
+            extra_metric_labels=None,
+        )
+
+        controller.set_prefetch_capacity_ratio.assert_called_once_with(0.75)
+        self.assertFalse(cache.enable_l2_prefetch_queue)
+        self.assertEqual(cache.waiting_l2_prefetches, set())
+        self.assertEqual(cache._l2_allocation_retry_after_epoch, 0)
+
+
+class TestHiCachePrefetchCapacity(unittest.TestCase):
+    def test_capacity_ratio_updates_token_limit(self):
+        controller = object.__new__(HiCacheController)
+        controller.mem_pool_host = SimpleNamespace(size=101)
+
+        controller.set_prefetch_capacity_ratio(0.75)
+
+        self.assertEqual(controller.prefetch_capacity_ratio, 0.75)
+        self.assertEqual(controller.prefetch_capacity_limit, 75)
 
 
 class TestDecodeHiCacheWaitingL2Safety(unittest.TestCase):
