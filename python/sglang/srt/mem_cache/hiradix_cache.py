@@ -4,10 +4,12 @@ import atexit
 import heapq
 import json
 import logging
+import math
 import os
 import threading
 import time
-from queue import Empty
+from dataclasses import dataclass
+from queue import Empty, Queue
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import torch
@@ -42,6 +44,7 @@ from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
 from sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler import (
     attach_hybrid_dsa_pool_to_hiradix_cache,
 )
+from sglang.srt.mem_cache.l2_prefetch_arena import L2PrefetchArena
 from sglang.srt.mem_cache.memory_pool import (
     DSATokenToKVPool,
     MHATokenToKVPool,
@@ -49,6 +52,7 @@ from sglang.srt.mem_cache.memory_pool import (
     MLATokenToKVPool,
 )
 from sglang.srt.mem_cache.memory_pool_host import MLATokenToKVPoolHost
+from sglang.srt.mem_cache.pool_host.base import sync_fixed_hicache_size
 from sglang.srt.mem_cache.pool_host.mha import get_mha_host_pool_cls
 from sglang.srt.mem_cache.radix_cache import (
     RadixCache,
@@ -70,6 +74,30 @@ if TYPE_CHECKING:
     from sglang.srt.server_args import ServerArgs
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_ENABLE_L2_PREFETCH_ARENA = False
+_DEFAULT_L2_PREFETCH_ARENA_SIZE_GB = 0.0
+
+
+@dataclass(slots=True)
+class _QueuedArenaPrefetch:
+    req_id: str
+    last_host_node: TreeNode
+    prefetch_key: RadixKey
+    last_hash: Optional[str]
+    prefix_keys: Optional[List[str]]
+    base_prefix_len: int
+    require_full: bool
+    failed_generation: int
+
+
+@dataclass(slots=True)
+class _ReadyArenaPrefetch:
+    last_host_node: TreeNode
+    prefetch_key: RadixKey
+    host_indices: torch.Tensor
+    hash_values: List[str]
+    base_prefix_len: int
 
 
 class HiRadixCache(RadixCache):
@@ -117,12 +145,16 @@ class HiRadixCache(RadixCache):
         self.enable_storage = server_args.hicache_storage_backend is not None
         self.enable_storage_metrics = self.enable_storage and params.enable_metrics
         self.extra_metric_labels = server_args.extra_metric_labels
+        self._cache_initialized = False
+        self.l2_prefetch_arena: Optional[L2PrefetchArena] = None
 
         (
             extra_config,
             prefetch_threshold,
             prefetch_timeout_config,
             hicache_storage_pass_prefix_keys,
+            enable_l2_prefetch_arena,
+            l2_prefetch_arena_size_gb,
         ) = self._parse_storage_backend_extra_config(
             server_args.hicache_storage_backend_extra_config
         )
@@ -182,6 +214,8 @@ class HiRadixCache(RadixCache):
             prefetch_threshold=prefetch_threshold,
             prefetch_timeout_config=prefetch_timeout_config,
             hicache_storage_pass_prefix_keys=hicache_storage_pass_prefix_keys,
+            enable_l2_prefetch_arena=enable_l2_prefetch_arena,
+            l2_prefetch_arena_size_gb=l2_prefetch_arena_size_gb,
             enable_storage=self.enable_storage,
             enable_storage_metrics=self.enable_storage_metrics,
             extra_metric_labels=self.extra_metric_labels,
@@ -193,6 +227,11 @@ class HiRadixCache(RadixCache):
         self.ongoing_load_back = {}
         # record the ongoing prefetch requests
         self.ongoing_prefetch = {}
+        self.waiting_arena_prefetches: dict[str, _QueuedArenaPrefetch] = {}
+        self.ready_arena_prefetches: dict[str, _ReadyArenaPrefetch] = {}
+        self.arena_prefetch_base_len_by_reqid: dict[str, int] = {}
+        self.arena_release_after_load: dict[int, torch.Tensor] = {}
+        self.arena_mem_release_queue: Queue[torch.Tensor] = Queue()
         self.ongoing_backup = {}
         # track per-request tokens loaded from storage (L3 hits)
         # key: request_id, value: number of tokens actually loaded from storage
@@ -210,6 +249,8 @@ class HiRadixCache(RadixCache):
         self.evictable_host_leaves = set()
 
         super().__init__(params=params)
+        self._cache_initialized = True
+        self._configure_l2_prefetch_arena()
 
     def _all_reduce_attn_groups(self, tensor: torch.Tensor, op):
         reduced = False
@@ -318,6 +359,8 @@ class HiRadixCache(RadixCache):
         prefetch_threshold: int,
         prefetch_timeout_config: PrefetchTimeoutConfig,
         hicache_storage_pass_prefix_keys: bool,
+        enable_l2_prefetch_arena: bool,
+        l2_prefetch_arena_size_gb: float,
         enable_storage: bool,
         enable_storage_metrics: bool,
         extra_metric_labels: Optional[Dict[str, str]],
@@ -326,7 +369,11 @@ class HiRadixCache(RadixCache):
         self.prefetch_threshold = prefetch_threshold
         self.prefetch_timeout_config = prefetch_timeout_config
         self.hicache_storage_pass_prefix_keys = hicache_storage_pass_prefix_keys
+        self.enable_l2_prefetch_arena = enable_l2_prefetch_arena
+        self.l2_prefetch_arena_size_gb = l2_prefetch_arena_size_gb
         self.enable_storage_metrics = enable_storage_metrics
+        if self._cache_initialized:
+            self._configure_l2_prefetch_arena()
 
         if self.enable_storage_metrics:
             attn_cp_rank, attn_cp_size = (
@@ -362,6 +409,57 @@ class HiRadixCache(RadixCache):
                     sorted(existing_collector.labels.keys()),
                     sorted(labels.keys()),
                 )
+
+    def _l2_prefetch_arena_capacity_tokens(self) -> int:
+        host_pool = self.cache_controller.mem_pool_host
+        capacity = int(self.l2_prefetch_arena_size_gb * 1e9 // host_pool.size_per_token)
+        capacity = sync_fixed_hicache_size(capacity, 1)
+        return capacity - capacity % self.page_size
+
+    def _configure_l2_prefetch_arena(self) -> None:
+        should_enable = self.enable_storage and self.enable_l2_prefetch_arena
+        if not should_enable:
+            if self.l2_prefetch_arena is not None:
+                self.l2_prefetch_arena.close()
+                self.l2_prefetch_arena = None
+            return
+
+        capacity = self._l2_prefetch_arena_capacity_tokens()
+        host_pool = self.cache_controller.mem_pool_host
+        minimum_capacity = max(self.page_size, self.prefetch_threshold)
+        if capacity < minimum_capacity:
+            raise ValueError(
+                "l2_prefetch_arena_size is too small: it provides "
+                f"{capacity} tokens, but at least {minimum_capacity} are required"
+            )
+        if capacity >= host_pool.size:
+            raise ValueError(
+                "l2_prefetch_arena_size must leave capacity for normal L2; "
+                f"arena={capacity} tokens, L2={host_pool.size} tokens"
+            )
+
+        current = self.l2_prefetch_arena
+        if current is not None and current.capacity_tokens == capacity:
+            return
+        if current is not None:
+            current.close()
+            self.l2_prefetch_arena = None
+
+        missing = capacity - host_pool.available_size()
+        if missing > 0:
+            self.evict_host(missing)
+        self.l2_prefetch_arena = L2PrefetchArena(
+            host_pool=host_pool,
+            capacity_tokens=capacity,
+            page_size=self.page_size,
+        )
+        logger.info(
+            "HiCache L2 prefetch arena enabled: configured_gb=%.3f, "
+            "capacity_tokens=%d, normal_l2_tokens=%d",
+            self.l2_prefetch_arena_size_gb,
+            capacity,
+            host_pool.size - capacity,
+        )
 
     def attach_storage_backend(
         self,
@@ -446,6 +544,8 @@ class HiRadixCache(RadixCache):
                 prefetch_threshold,
                 prefetch_timeout_config,
                 hicache_storage_pass_prefix_keys,
+                enable_l2_prefetch_arena,
+                l2_prefetch_arena_size_gb,
             ) = self._parse_storage_backend_extra_config(
                 storage_backend_extra_config_json
             )
@@ -470,15 +570,31 @@ class HiRadixCache(RadixCache):
             )
             return False, f"Failed to attach storage backend '{storage_backend}': {e}"
 
-        self._apply_storage_runtime_config(
-            storage_backend=storage_backend,
-            prefetch_threshold=prefetch_threshold,
-            prefetch_timeout_config=prefetch_timeout_config,
-            hicache_storage_pass_prefix_keys=hicache_storage_pass_prefix_keys,
-            enable_storage=True,
-            enable_storage_metrics=self._enable_metrics_flag,
-            extra_metric_labels=self.extra_metric_labels,
-        )
+        try:
+            self._apply_storage_runtime_config(
+                storage_backend=storage_backend,
+                prefetch_threshold=prefetch_threshold,
+                prefetch_timeout_config=prefetch_timeout_config,
+                hicache_storage_pass_prefix_keys=hicache_storage_pass_prefix_keys,
+                enable_l2_prefetch_arena=enable_l2_prefetch_arena,
+                l2_prefetch_arena_size_gb=l2_prefetch_arena_size_gb,
+                enable_storage=True,
+                enable_storage_metrics=self._enable_metrics_flag,
+                extra_metric_labels=self.extra_metric_labels,
+            )
+        except Exception as e:
+            logger.exception("Failed to configure HiCache after storage attach.")
+            try:
+                self.cache_controller.detach_storage_backend()
+            except Exception:
+                logger.exception("Failed to roll back storage backend attach.")
+            self.enable_storage = False
+            self.enable_storage_metrics = False
+            try:
+                self._configure_l2_prefetch_arena()
+            except Exception:
+                logger.exception("Failed to release L2 prefetch arena during rollback.")
+            return False, f"Failed to configure HiCache storage backend: {e}"
         return True, "Attached HiCache storage backend successfully."
 
     def detach_storage_backend(self) -> tuple[bool, str]:
@@ -508,6 +624,7 @@ class HiRadixCache(RadixCache):
 
         self.enable_storage = False
         self.enable_storage_metrics = False
+        self._configure_l2_prefetch_arena()
         return True, "Detached HiCache storage backend successfully."
 
     def _force_release_pending_storage_ops(self):
@@ -522,9 +639,10 @@ class HiRadixCache(RadixCache):
         # Force release leftover prefetch ops: free pre-allocated host pages and
         # drop the host protection on the matched prefix node.
         try:
+            self.waiting_arena_prefetches.clear()
             for req_id, info in list(self.ongoing_prefetch.items()):
                 try:
-                    last_host_node, token_ids, host_indices, _operation = info
+                    last_host_node, token_ids, host_indices, operation = info
                 except Exception:
                     # Unexpected shape; just drop it.
                     self.ongoing_prefetch.pop(req_id, None)
@@ -532,7 +650,16 @@ class HiRadixCache(RadixCache):
 
                 try:
                     if host_indices is not None:
-                        cc.mem_pool_host.free(host_indices)
+                        release_callback = getattr(
+                            operation, "host_release_callback", None
+                        )
+                        if (
+                            release_callback is not None
+                            and self.l2_prefetch_arena is not None
+                        ):
+                            self.l2_prefetch_arena.free_remaining(host_indices)
+                        else:
+                            cc.mem_pool_host.free(host_indices)
                 except Exception:
                     logger.exception(
                         "Failed to free host indices for prefetch %s", req_id
@@ -553,8 +680,31 @@ class HiRadixCache(RadixCache):
                     pass
 
                 self.ongoing_prefetch.pop(req_id, None)
+                self.arena_prefetch_base_len_by_reqid.pop(req_id, None)
         except Exception:
             logger.exception("Force release pending prefetch ops failed.")
+
+        for req_id in list(self.ready_arena_prefetches):
+            self._discard_ready_arena_prefetch(req_id, force=True)
+
+        if self.l2_prefetch_arena is not None:
+            # Arena pages remain live until H2D finishes. Detach is local, so
+            # drain these acks here instead of entering distributed loading_check.
+            for ack in list(cc.ack_load_queue):
+                ack.finish_event.synchronize()
+                for ack_id in ack.node_ids:
+                    arena_indices = self.arena_release_after_load.pop(ack_id, None)
+                    if arena_indices is not None:
+                        self.l2_prefetch_arena.free_remaining(arena_indices)
+                    end_node = self.ongoing_load_back.pop(ack_id, None)
+                    if end_node is not None:
+                        self.dec_lock_ref(end_node)
+            cc.ack_load_queue.clear()
+
+            for ack_id, host_indices in list(self.arena_release_after_load.items()):
+                self.l2_prefetch_arena.free_remaining(host_indices)
+                self.arena_release_after_load.pop(ack_id, None)
+            self.arena_prefetch_base_len_by_reqid.clear()
 
         # Force release leftover backup ops: drop host protection on nodes.
         try:
@@ -579,6 +729,7 @@ class HiRadixCache(RadixCache):
             n_revoke=None,
             n_backup=None,
             n_release=None,
+            n_arena_release=None,
             log_metrics=False,
         )
 
@@ -587,6 +738,7 @@ class HiRadixCache(RadixCache):
         n_revoke: Optional[int],
         n_backup: Optional[int],
         n_release: Optional[int],
+        n_arena_release: Optional[int],
         log_metrics: bool,
     ):
         cc = self.cache_controller
@@ -610,6 +762,7 @@ class HiRadixCache(RadixCache):
                     cc.prefetch_tokens_occupied -= len(token_ids)
                     if cc.prefetch_tokens_occupied < 0:
                         cc.prefetch_tokens_occupied = 0
+                    self.arena_prefetch_base_len_by_reqid.pop(req_id, None)
 
         def _drain_backup():
             for operation in _drain_queue(cc.ack_backup_queue, n_backup):
@@ -630,9 +783,18 @@ class HiRadixCache(RadixCache):
                 host_indices = torch.cat(host_indices_list, dim=0)
                 cc.mem_pool_host.free(host_indices)
 
+        def _drain_arena_release():
+            arena = self.l2_prefetch_arena
+            host_indices_list = list(
+                _drain_queue(self.arena_mem_release_queue, n_arena_release)
+            )
+            if arena is not None and host_indices_list:
+                arena.free(torch.cat(host_indices_list, dim=0))
+
         _drain_revoke()
         _drain_backup()
         _drain_release()
+        _drain_arena_release()
 
     def _parse_storage_backend_extra_config(
         self, storage_backend_extra_config: Optional[str]
@@ -644,7 +806,14 @@ class HiRadixCache(RadixCache):
             storage_backend_extra_config: JSON string containing extra configuration
 
         Returns:
-            tuple: (extra_config_dict, prefetch_threshold, prefetch_timeout_config, hicache_storage_pass_prefix_keys)
+            tuple: (
+                extra_config_dict,
+                prefetch_threshold,
+                prefetch_timeout_config,
+                hicache_storage_pass_prefix_keys,
+                enable_l2_prefetch_arena,
+                l2_prefetch_arena_size_gb,
+            )
         """
         # Parse extra config if provided. Extra config can be a JSON string or a json/toml/yaml file path prefixed with "@".
         extra_config = {}
@@ -690,6 +859,12 @@ class HiRadixCache(RadixCache):
         hicache_storage_pass_prefix_keys = extra_config.pop(
             "hicache_storage_pass_prefix_keys", False
         )
+        enable_l2_prefetch_arena = extra_config.pop(
+            "enable_l2_prefetch_arena", _DEFAULT_ENABLE_L2_PREFETCH_ARENA
+        )
+        l2_prefetch_arena_size_gb = extra_config.pop(
+            "l2_prefetch_arena_size", _DEFAULT_L2_PREFETCH_ARENA_SIZE_GB
+        )
 
         if not isinstance(prefetch_threshold, int):
             raise ValueError(
@@ -712,6 +887,27 @@ class HiRadixCache(RadixCache):
                 "hicache_storage_pass_prefix_keys must be bool, got "
                 f"{type(hicache_storage_pass_prefix_keys).__name__}"
             )
+        if not isinstance(enable_l2_prefetch_arena, bool):
+            raise ValueError(
+                "enable_l2_prefetch_arena must be bool, got "
+                f"{type(enable_l2_prefetch_arena).__name__}"
+            )
+        if isinstance(l2_prefetch_arena_size_gb, bool) or not isinstance(
+            l2_prefetch_arena_size_gb, (int, float)
+        ):
+            raise ValueError(
+                "l2_prefetch_arena_size must be a number in GB, got "
+                f"{type(l2_prefetch_arena_size_gb).__name__}"
+            )
+        if not math.isfinite(l2_prefetch_arena_size_gb):
+            raise ValueError("l2_prefetch_arena_size must be finite")
+        if l2_prefetch_arena_size_gb < 0:
+            raise ValueError("l2_prefetch_arena_size must not be negative")
+        if enable_l2_prefetch_arena and l2_prefetch_arena_size_gb == 0:
+            raise ValueError(
+                "l2_prefetch_arena_size must be greater than 0 when "
+                "enable_l2_prefetch_arena is true"
+            )
 
         prefetch_timeout_config = PrefetchTimeoutConfig(
             base=float(prefetch_timeout_base),
@@ -724,12 +920,32 @@ class HiRadixCache(RadixCache):
             prefetch_threshold,
             prefetch_timeout_config,
             hicache_storage_pass_prefix_keys,
+            enable_l2_prefetch_arena,
+            float(l2_prefetch_arena_size_gb),
         )
 
     def reset(self):
         TreeNode.counter = 0
         self.cache_controller.reset()
+        for req_id, info in list(self.ongoing_prefetch.items()):
+            operation = info[3]
+            if getattr(operation, "host_release_callback", None) is None:
+                continue
+            info[0].release_host()
+            self.ongoing_prefetch.pop(req_id, None)
+        for state in self.ready_arena_prefetches.values():
+            state.last_host_node.release_host()
+        for ack_id in self.arena_release_after_load:
+            self.ongoing_load_back.pop(ack_id, None)
+        self.waiting_arena_prefetches.clear()
+        self.ready_arena_prefetches.clear()
+        self.arena_prefetch_base_len_by_reqid.clear()
+        self.arena_release_after_load.clear()
+        with self.arena_mem_release_queue.mutex:
+            self.arena_mem_release_queue.queue.clear()
         self.token_to_kv_pool_host.clear()
+        if self.l2_prefetch_arena is not None:
+            self.l2_prefetch_arena.rebind_after_host_clear()
         # Clear per-request tracking dicts
         self.prefetch_loaded_tokens_by_reqid.clear()
         self.evictable_host_leaves.clear()
@@ -987,6 +1203,10 @@ class HiRadixCache(RadixCache):
             finish_event.synchronize()
             for ack_id in ack_list:
                 end_node = self.ongoing_load_back.pop(ack_id)
+                if self.l2_prefetch_arena is not None:
+                    arena_indices = self.arena_release_after_load.pop(ack_id, None)
+                    if arena_indices is not None:
+                        self.l2_prefetch_arena.free(arena_indices)
                 self.dec_lock_ref(end_node)
             finish_count -= 1
 
@@ -1319,10 +1539,144 @@ class HiRadixCache(RadixCache):
 
         return device_indices
 
+    def _load_back_from_arena(
+        self,
+        params: InitLoadBackParams,
+        state: _ReadyArenaPrefetch,
+    ) -> Optional[Tuple[torch.Tensor, TreeNode]]:
+        req = params.req
+        if req is None:
+            return None
+        req_id = req.rid
+        last_hit_node = params.best_match_node
+        if len(state.prefetch_key) != len(state.host_indices) or len(
+            state.hash_values
+        ) * self.page_size != len(state.host_indices):
+            logger.error(
+                "L2 prefetch arena state is inconsistent for request %s; "
+                "falling back to recomputation",
+                req_id,
+            )
+            self._discard_ready_arena_prefetch(req_id)
+            return None
+
+        nodes_to_load = []
+        node = last_hit_node
+        while node.evicted:
+            if not node.backuped:
+                self._discard_ready_arena_prefetch(req_id)
+                return None
+            nodes_to_load.insert(0, node)
+            node = node.parent
+        ancestor_node = node
+
+        normal_host_tokens = sum(len(n.host_value) for n in nodes_to_load)
+        expected_host_tokens = normal_host_tokens + len(state.host_indices)
+        if expected_host_tokens != params.host_hit_length:
+            # Match state changed between match_prefix and admission. Drop only
+            # the transient suffix; the ordinary L2 prefix remains reusable.
+            self._discard_ready_arena_prefetch(req_id)
+            return None
+
+        child_key = state.prefetch_key.child_key(self.page_size)
+        if child_key in last_hit_node.children:
+            self._discard_ready_arena_prefetch(req_id)
+            return None
+
+        host_parts = [n.host_value for n in nodes_to_load]
+        host_parts.append(state.host_indices)
+        host_indices = torch.cat(host_parts)
+
+        result = self.inc_lock_ref(ancestor_node)
+        delta = result.delta
+        if (
+            params.mem_quota is not None
+            and len(host_indices) > params.mem_quota + delta
+        ):
+            self.dec_lock_ref(ancestor_node)
+            self._discard_ready_arena_prefetch(req_id)
+            return None
+
+        for n in nodes_to_load:
+            n.protect_host()
+
+        new_node = TreeNode(priority=last_hit_node.priority)
+        device_indices = self.cache_controller.load(
+            host_indices=host_indices,
+            node_id=new_node.id,
+            **self._get_extra_pools(),
+        )
+        if device_indices is None:
+            self.evict(EvictParams(num_tokens=len(host_indices)))
+            device_indices = self.cache_controller.load(
+                host_indices=host_indices,
+                node_id=new_node.id,
+                **self._get_extra_pools(),
+            )
+        self.dec_lock_ref(ancestor_node)
+
+        if device_indices is None:
+            for n in nodes_to_load:
+                n.release_host()
+            self._discard_ready_arena_prefetch(req_id)
+            logger.warning(
+                "L2 prefetch arena: failed to load %d tokens for request %s "
+                "even after device eviction",
+                len(host_indices),
+                req_id,
+            )
+            return None
+        if len(device_indices) != len(host_indices):
+            raise RuntimeError(
+                "L2 prefetch arena load returned a mismatched device allocation"
+            )
+
+        for n in nodes_to_load:
+            n.release_host()
+
+        offset = 0
+        for loaded_node in nodes_to_load:
+            node_len = len(loaded_node.host_value)
+            loaded_node.value = device_indices[offset : offset + node_len].clone()
+            offset += node_len
+            self._record_store_event(loaded_node, medium=StorageMedium.GPU)
+
+        new_node.parent = last_hit_node
+        new_node.key = state.prefetch_key
+        new_node.value = device_indices[offset:].clone()
+        new_node.hash_value = list(state.hash_values)
+        last_hit_node.children[child_key] = new_node
+        self._update_leaf_status(last_hit_node)
+        self._update_leaf_status(new_node)
+        self._update_host_leaf_status(last_hit_node)
+        self._update_host_leaf_status(new_node)
+        self._record_store_event(new_node, medium=StorageMedium.GPU)
+
+        self.evictable_size_ += len(device_indices)
+        self.ongoing_load_back[new_node.id] = new_node
+        self.arena_release_after_load[new_node.id] = state.host_indices
+        self.inc_lock_ref(new_node)
+
+        self.ready_arena_prefetches.pop(req_id, None)
+        state.last_host_node.release_host()
+
+        if self.metrics_collector is not None:
+            self.metrics_collector.increment_load_back_num_tokens(len(device_indices))
+
+        return device_indices, new_node
+
     def init_load_back(
         self,
         params: InitLoadBackParams,
     ):
+        if self.l2_prefetch_arena is not None:
+            req_id = getattr(params.req, "rid", None)
+            arena_state = self.ready_arena_prefetches.get(req_id)
+            if arena_state is not None:
+                result = self._load_back_from_arena(params, arena_state)
+                if result is not None:
+                    return result
+
         last_node = params.best_match_node
         mem_quota = params.mem_quota
         if last_node.evicted:
@@ -1348,7 +1702,10 @@ class HiRadixCache(RadixCache):
         last_hash: Optional[str] = None,
         prefix_keys: Optional[List[str]] = None,
     ) -> int:
-        if not self.enable_storage or self.cache_controller.prefetch_rate_limited():
+        if not self.enable_storage or (
+            self.l2_prefetch_arena is None
+            and self.cache_controller.prefetch_rate_limited()
+        ):
             return 0
 
         prefetch_key = RadixKey(
@@ -1415,21 +1772,24 @@ class HiRadixCache(RadixCache):
         """
         cc = self.cache_controller
 
-        qsizes = torch.tensor(
-            [
-                cc.prefetch_revoke_queue.qsize(),
-                cc.ack_backup_queue.qsize(),
-                cc.host_mem_release_queue.qsize(),
-            ],
-            dtype=torch.int,
-        )
+        queue_sizes = [
+            cc.prefetch_revoke_queue.qsize(),
+            cc.ack_backup_queue.qsize(),
+            cc.host_mem_release_queue.qsize(),
+        ]
+        if self.l2_prefetch_arena is not None:
+            queue_sizes.append(self.arena_mem_release_queue.qsize())
+        qsizes = torch.tensor(queue_sizes, dtype=torch.int)
         self._all_reduce_attn_groups(qsizes, torch.distributed.ReduceOp.MIN)
 
-        n_revoke, n_backup, n_release = map(int, qsizes.tolist())
+        reduced_sizes = list(map(int, qsizes.tolist()))
+        n_revoke, n_backup, n_release = reduced_sizes[:3]
+        n_arena_release = reduced_sizes[3] if len(reduced_sizes) == 4 else 0
         self._drain_storage_control_queues_impl(
             n_revoke=n_revoke,
             n_backup=n_backup,
             n_release=n_release,
+            n_arena_release=n_arena_release,
             log_metrics=True,
         )
 
@@ -1481,7 +1841,127 @@ class HiRadixCache(RadixCache):
         can_terminate = can_terminate or operation_terminated
         return can_terminate
 
+    def _enqueue_arena_prefetch(self, state: _QueuedArenaPrefetch) -> None:
+        arena = self.l2_prefetch_arena
+        if arena is None:
+            return
+        state.failed_generation = arena.generation
+        self.waiting_arena_prefetches.setdefault(state.req_id, state)
+
+    def _cancel_waiting_arena_prefetch(self, req_id: str) -> None:
+        if req_id not in self.waiting_arena_prefetches:
+            return
+        was_head = next(iter(self.waiting_arena_prefetches)) == req_id
+        self.waiting_arena_prefetches.pop(req_id, None)
+        if was_head and self.l2_prefetch_arena is not None:
+            self.l2_prefetch_arena.notify_waiters()
+
+    def _enqueue_arena_mem_release(self, host_indices: torch.Tensor) -> None:
+        if host_indices.numel() == 0:
+            return
+        self.arena_mem_release_queue.put(host_indices)
+
+    def _start_arena_prefetch(self, state: _QueuedArenaPrefetch) -> bool:
+        arena = self.l2_prefetch_arena
+        if arena is None:
+            return False
+
+        requested_length = len(state.prefetch_key)
+        available_size = arena.available_size()
+        if state.require_full:
+            local_capacity = (
+                requested_length if available_size >= requested_length else 0
+            )
+        else:
+            local_capacity = min(requested_length, available_size)
+        common_capacity = torch.tensor(local_capacity, dtype=torch.int)
+        self._all_reduce_attn_groups(common_capacity, torch.distributed.ReduceOp.MIN)
+        prefetch_length = int(common_capacity.item())
+        prefetch_length -= prefetch_length % self.page_size
+        if prefetch_length < self.prefetch_threshold:
+            state.failed_generation = arena.generation
+            return False
+
+        host_indices = arena.alloc(prefetch_length)
+        if host_indices is None:
+            state.failed_generation = arena.generation
+            return False
+
+        prefetch_key = state.prefetch_key[:prefetch_length]
+        state.last_host_node.protect_host()
+        try:
+            operation = self.cache_controller.prefetch(
+                state.req_id,
+                host_indices,
+                prefetch_key,
+                state.last_hash,
+                list(state.prefix_keys) if state.prefix_keys is not None else None,
+                host_release_callback=self._enqueue_arena_mem_release,
+                **self._get_extra_pools(),
+            )
+        except Exception:
+            arena.free(host_indices)
+            state.last_host_node.release_host()
+            raise
+
+        self.waiting_arena_prefetches.pop(state.req_id, None)
+        self.ongoing_prefetch[state.req_id] = (
+            state.last_host_node,
+            prefetch_key,
+            host_indices,
+            operation,
+        )
+        self.arena_prefetch_base_len_by_reqid[state.req_id] = state.base_prefix_len
+        self.cache_controller.prefetch_tokens_occupied += len(prefetch_key)
+        return True
+
+    def _dispatch_waiting_arena_prefetches(self) -> None:
+        arena = self.l2_prefetch_arena
+        while arena is not None and self.waiting_arena_prefetches:
+            state = next(iter(self.waiting_arena_prefetches.values()))
+            if state.failed_generation == arena.generation:
+                break
+            if not self._start_arena_prefetch(state):
+                break
+
+    def _discard_ready_arena_prefetch(
+        self, req_id: str, *, force: bool = False
+    ) -> None:
+        state = self.ready_arena_prefetches.pop(req_id, None)
+        if state is None:
+            return
+
+        arena = self.l2_prefetch_arena
+        if arena is not None:
+            if force:
+                arena.free_remaining(state.host_indices)
+            else:
+                arena.free(state.host_indices)
+        state.last_host_node.release_host()
+
+    def _trim_ready_arena_prefix(
+        self, state: _ReadyArenaPrefetch, num_tokens: int
+    ) -> None:
+        if num_tokens <= 0:
+            return
+        if num_tokens % self.page_size != 0 or num_tokens > len(state.host_indices):
+            raise RuntimeError("Invalid L2 prefetch arena prefix trim")
+
+        arena = self.l2_prefetch_arena
+        if arena is None:
+            raise RuntimeError("L2 prefetch arena was disabled with ready data")
+        arena.free(state.host_indices[:num_tokens])
+        state.host_indices = state.host_indices[num_tokens:]
+        state.prefetch_key = state.prefetch_key[num_tokens:]
+        state.hash_values = state.hash_values[num_tokens // self.page_size :]
+        state.base_prefix_len += num_tokens
+
     def check_prefetch_progress(self, req_id: str) -> bool:
+        if self.l2_prefetch_arena is not None:
+            self._dispatch_waiting_arena_prefetches()
+            if req_id in self.waiting_arena_prefetches:
+                return False
+
         if req_id not in self.ongoing_prefetch:
             # there is no ongoing prefetch for this request or it has been revoked
             return True
@@ -1511,6 +1991,40 @@ class HiRadixCache(RadixCache):
             completed_tokens_tensor, torch.distributed.ReduceOp.MIN
         )
         min_completed_tokens = completed_tokens_tensor.item()
+
+        if getattr(operation, "host_release_callback", None) is not None:
+            if completed_tokens > min_completed_tokens:
+                operation.host_release_callback(
+                    host_indices[min_completed_tokens:completed_tokens]
+                )
+
+            base_prefix_len = self.arena_prefetch_base_len_by_reqid.pop(req_id, None)
+            if min_completed_tokens > 0 and base_prefix_len is not None:
+                self.ready_arena_prefetches[req_id] = _ReadyArenaPrefetch(
+                    last_host_node=last_host_node,
+                    prefetch_key=prefetch_key[:min_completed_tokens],
+                    host_indices=host_indices[:min_completed_tokens],
+                    hash_values=hash_value[: min_completed_tokens // self.page_size],
+                    base_prefix_len=base_prefix_len,
+                )
+            else:
+                if min_completed_tokens > 0:
+                    operation.host_release_callback(host_indices[:min_completed_tokens])
+                    logger.error(
+                        "Missing L2 prefetch arena base-prefix state for request %s; "
+                        "discarding the fetched suffix",
+                        req_id,
+                    )
+                last_host_node.release_host()
+
+            del self.ongoing_prefetch[req_id]
+            self.cache_controller.prefetch_tokens_occupied -= len(prefetch_key)
+            loaded_tokens = min_completed_tokens if base_prefix_len is not None else 0
+            self.prefetch_loaded_tokens_by_reqid[req_id] = loaded_tokens
+            if self.enable_storage_metrics:
+                self.storage_metrics_collector.log_prefetched_tokens(loaded_tokens)
+            return True
+
         fetched_key = prefetch_key[:min_completed_tokens]
         written_indices = host_indices[:min_completed_tokens]
         matched_length = self._insert_helper_host(
@@ -1538,6 +2052,13 @@ class HiRadixCache(RadixCache):
         return True
 
     def terminate_prefetch(self, req_id: str):
+        if (
+            self.l2_prefetch_arena is not None
+            and req_id in self.waiting_arena_prefetches
+        ):
+            self._cancel_waiting_arena_prefetch(req_id)
+            return
+
         if req_id not in self.ongoing_prefetch:
             return
 
@@ -1578,12 +2099,61 @@ class HiRadixCache(RadixCache):
         while not last_host_node.backuped:
             last_host_node = last_host_node.parent
 
+        best_match_node = last_host_node
+        arena = self.l2_prefetch_arena
+        req_id = getattr(params.req, "rid", None) if arena is not None else None
+        arena_state = (
+            self.ready_arena_prefetches.get(req_id) if arena is not None else None
+        )
+        if arena_state is not None:
+            query_length = len(key)
+            normal_cached = len(value) + host_hit_length
+            if normal_cached < arena_state.base_prefix_len:
+                # The prefix preceding the transient suffix disappeared while
+                # L3 I/O was running. The suffix is no longer safely reusable.
+                self._discard_ready_arena_prefetch(req_id)
+            else:
+                overlap = normal_cached - arena_state.base_prefix_len
+                if overlap % self.page_size != 0:
+                    logger.error(
+                        "L2 prefetch arena found an unaligned prefix for request %s; "
+                        "falling back to recomputation",
+                        req_id,
+                    )
+                    self._discard_ready_arena_prefetch(req_id)
+                else:
+                    overlap = min(overlap, len(arena_state.host_indices))
+                    self._trim_ready_arena_prefix(arena_state, overlap)
+
+                    useful_tokens = min(
+                        len(arena_state.host_indices),
+                        max(0, query_length - arena_state.base_prefix_len),
+                    )
+                    useful_tokens -= useful_tokens % self.page_size
+                    if useful_tokens < len(arena_state.host_indices):
+                        arena.free(arena_state.host_indices[useful_tokens:])
+                        arena_state.host_indices = arena_state.host_indices[
+                            :useful_tokens
+                        ]
+                        arena_state.prefetch_key = arena_state.prefetch_key[
+                            :useful_tokens
+                        ]
+                        arena_state.hash_values = arena_state.hash_values[
+                            : useful_tokens // self.page_size
+                        ]
+
+                    if len(arena_state.host_indices) == 0:
+                        self._discard_ready_arena_prefetch(req_id)
+                    else:
+                        if host_hit_length == 0:
+                            best_match_node = last_node
+                        host_hit_length += len(arena_state.host_indices)
+
         return MatchResult(
             device_indices=value,
             last_device_node=last_node,
             last_host_node=last_host_node,
-            # TODO(ispobock): use best_match_node as start node for load_back
-            best_match_node=last_host_node,
+            best_match_node=best_match_node,
             host_hit_length=host_hit_length,
         )
 
@@ -1594,6 +2164,8 @@ class HiRadixCache(RadixCache):
         new_input_tokens: List[int],
         last_hash: Optional[str] = None,
         prefix_keys: Optional[List[str]] = None,
+        prefetch_base_len: Optional[int] = None,
+        require_full_prefetch: bool = False,
     ):
         prefetch_key = RadixKey(
             new_input_tokens,
@@ -1603,11 +2175,45 @@ class HiRadixCache(RadixCache):
         # align the number of fetching tokens to the page size
         prefetch_key = prefetch_key.page_aligned(self.page_size)
         prefetch_length = len(prefetch_key)
-        if (
-            not self.enable_storage
-            or prefetch_length < self.prefetch_threshold
-            or self.cache_controller.prefetch_rate_limited()
-        ):
+        if not self.enable_storage or prefetch_length < self.prefetch_threshold:
+            if self.l2_prefetch_arena is not None:
+                self._cancel_waiting_arena_prefetch(req_id)
+            return
+
+        arena = self.l2_prefetch_arena
+        if arena is not None:
+            if require_full_prefetch and prefetch_length > arena.capacity_tokens:
+                raise ValueError(
+                    "A full L2 prefetch arena admission cannot exceed arena capacity"
+                )
+            if (
+                req_id in self.ongoing_prefetch
+                or req_id in self.ready_arena_prefetches
+                or req_id in self.waiting_arena_prefetches
+            ):
+                return
+            if prefetch_base_len is None:
+                prefetch_base_len = 0
+                node = last_host_node
+                while node is not self.root_node:
+                    prefetch_base_len += len(node.key)
+                    node = node.parent
+
+            state = _QueuedArenaPrefetch(
+                req_id=req_id,
+                last_host_node=last_host_node,
+                prefetch_key=prefetch_key,
+                last_hash=last_hash,
+                prefix_keys=(list(prefix_keys) if prefix_keys is not None else None),
+                base_prefix_len=prefetch_base_len,
+                require_full=require_full_prefetch,
+                failed_generation=arena.generation,
+            )
+            if self.waiting_arena_prefetches or not self._start_arena_prefetch(state):
+                self._enqueue_arena_prefetch(state)
+            return
+
+        if self.cache_controller.prefetch_rate_limited():
             return
 
         last_host_node.protect_host()
@@ -1833,6 +2439,9 @@ class HiRadixCache(RadixCache):
     def release_aborted_request(self, rid: str):
         # Clean up storage hit tracking for aborted request
         self.prefetch_loaded_tokens_by_reqid.pop(rid, None)
+        if self.l2_prefetch_arena is not None:
+            self._cancel_waiting_arena_prefetch(rid)
+            self._discard_ready_arena_prefetch(rid)
 
         if rid not in self.ongoing_prefetch:
             return
@@ -1847,5 +2456,12 @@ class HiRadixCache(RadixCache):
         self._barrier_attn_groups()
         last_host_node.release_host()
         del self.ongoing_prefetch[rid]
-        self.cache_controller.append_host_mem_release(host_indices[:completed_tokens])
+        self.arena_prefetch_base_len_by_reqid.pop(rid, None)
+        release_callback = getattr(operation, "host_release_callback", None)
+        if release_callback is not None:
+            release_callback(host_indices[:completed_tokens])
+        else:
+            self.cache_controller.append_host_mem_release(
+                host_indices[:completed_tokens]
+            )
         self.cache_controller.prefetch_tokens_occupied -= len(prefetch_key)

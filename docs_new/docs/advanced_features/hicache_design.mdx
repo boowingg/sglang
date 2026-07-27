@@ -56,6 +56,21 @@ After local matching, for the parts not found in L1 or L2, the system queries L3
 
 After prefetching stops, the data already fetched is used together with the local data for the prefill computation.
 
+#### Dedicated L2 prefetch arena
+
+For workloads where concurrent L3 reads frequently exhaust normal L2 capacity, HiCache can reserve part of the existing L2 pool as a transient prefetch arena. The arena is isolated from normal L2 allocation and write-back: L3 reads use its pages in FIFO request order, the fetched suffix is transferred directly to L1 together with any ordinary L2 prefix, and the pages return to the arena only after the asynchronous L2-to-L1 completion event. The transient pages are not inserted as persistent L2 radix entries. Once restored to L1, cache nodes continue to follow the configured standard HiCache write policy.
+
+This mode is disabled by default and currently applies to the `HiRadixCache` path. Configure it through `--hicache-storage-backend-extra-config`:
+
+```bash
+--hicache-storage-backend-extra-config \
+  '{"enable_l2_prefetch_arena":true,"l2_prefetch_arena_size":4}'
+```
+
+`l2_prefetch_arena_size` is expressed in decimal gigabytes per rank and is carved out of `--hicache-size` (or the pool derived from `--hicache-ratio`); it does not allocate additional host memory. The configured size must provide at least one complete page and `prefetch_threshold` tokens, and it must be smaller than the complete L2 pool. A larger arena permits more concurrent L3 transfers, while leaving less capacity for persistent normal L2 entries and write staging.
+
+Arena admission has no independent timeout. An aborted request is removed from the FIFO, while an admitted request continues to use the configured `hicache_storage_prefetch_policy`.
+
 For **timeout** strategy, HiCache introduces three configuration parameters to support fine-grained control over prefetch timeout conditions:
 
 * `prefetch_timeout_base`: the base timeout, representing overhead unrelated to the number of tokens (e.g., scheduling and synchronization). Default: `2` seconds.
@@ -168,3 +183,5 @@ Specifically, **LMCache**, an efficient KV cache layer for enterprise-scale LLM 
 - **`--hicache-storage-backend-extra-config HICACHE_STORAGE_BACKEND_EXTRA_CONFIG`**: the extra config can be either
   - a JSON string containing extra configuration for the storage backend, e.g., `--hicache-storage-backend-extra-config '{"prefetch_threshold":512, "prefetch_timeout_base": 0.5, "prefetch_timeout_per_ki_token": 0.25}' `, or
   - a TOML or JSON or YAML file specifying the extra configuration for the storage backend (to differentiate from the JSON string input, prepend a `@` in front of the file name), e.g., `--hicache-storage-backend-extra-config "@config.toml"` where `config.toml` is the config file containing the complex configurations. This can be useful when the configuration consists of many or complex key-value pairs (for instance, it is preferred to use a config file for NIXL backend as its configurations can be complex).
+  - `enable_l2_prefetch_arena` (default `false`) enables the dedicated transient L3 prefetch area.
+  - `l2_prefetch_arena_size` sets its size in decimal gigabytes per rank.

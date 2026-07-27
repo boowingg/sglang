@@ -75,18 +75,31 @@ class DecodeHiCachePreallocMixin:
             if last_host_node.backuped or last_host_node is self.tree_cache.root_node:
                 matched_len = l1_prefix_len + l2_host_hit_length
                 suffix_tokens = req.origin_input_ids[matched_len:]
-                last_hash = last_host_node.get_last_hash_value()
+                prefetch_node = last_host_node
+                if getattr(self.tree_cache, "l2_prefetch_arena", None) is not None:
+                    prefetch_node = (
+                        result.best_match_node
+                        if l2_host_hit_length > 0
+                        else result.last_device_node
+                    )
+                last_hash = prefetch_node.get_last_hash_value()
                 prefix_keys = (
-                    last_host_node.get_prefix_hash_values(last_host_node.parent)
+                    prefetch_node.get_prefix_hash_values(prefetch_node.parent)
                     if self.tree_cache.hicache_storage_pass_prefix_keys
                     else None
                 )
                 l3_storage_hit_length = self.tree_cache.query_storage_hit_length(
-                    last_host_node,
+                    prefetch_node,
                     suffix_tokens,
                     last_hash,
                     prefix_keys,
                 )
+                arena = getattr(self.tree_cache, "l2_prefetch_arena", None)
+                if arena is not None:
+                    l3_storage_hit_length = min(
+                        l3_storage_hit_length, arena.capacity_tokens
+                    )
+                last_host_node = prefetch_node
 
         return DecodePrefixMatch(
             prefix_indices=prefix_indices,
@@ -122,10 +135,23 @@ class DecodeHiCachePreallocMixin:
                 else None
             )
             self.tree_cache.prefetch_from_storage(
-                req.rid, node, suffix, last_hash, prefix_keys
+                req.rid,
+                node,
+                suffix,
+                last_hash,
+                prefix_keys,
+                **(
+                    {
+                        "prefetch_base_len": matched_len,
+                        "require_full_prefetch": True,
+                    }
+                    if getattr(self.tree_cache, "l2_prefetch_arena", None) is not None
+                    else {}
+                ),
             )
             prefix_match.prefetch_registered = (
                 req.rid in self.tree_cache.ongoing_prefetch
+                or req.rid in getattr(self.tree_cache, "waiting_arena_prefetches", ())
             )
         except Exception as e:
             logger.warning(

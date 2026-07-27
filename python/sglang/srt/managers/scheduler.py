@@ -2291,24 +2291,37 @@ class Scheduler(
             req.init_next_round_input(self.tree_cache, cow_mamba=False)
             last_host_node = req.last_host_node
             if last_host_node.backuped or last_host_node is self.tree_cache.root_node:
-                last_hash = last_host_node.get_last_hash_value()
                 matched_len = len(req.prefix_indices) + req.host_hit_length
+                prefetch_anchor = last_host_node
+                if getattr(self.tree_cache, "l2_prefetch_arena", None) is not None:
+                    prefetch_anchor = (
+                        req.best_match_node
+                        if req.host_hit_length > 0
+                        else req.last_node
+                    )
+                last_hash = prefetch_anchor.get_last_hash_value()
                 match_end = req._compute_max_prefix_len(
                     len(req.full_untruncated_fill_ids)
                 )
                 new_input_tokens = req.full_untruncated_fill_ids[matched_len:match_end]
 
                 prefix_keys = (
-                    last_host_node.get_prefix_hash_values(last_host_node.parent)
+                    prefetch_anchor.get_prefix_hash_values(prefetch_anchor.parent)
                     if self.tree_cache.hicache_storage_pass_prefix_keys
                     else None
                 )
                 self.tree_cache.prefetch_from_storage(
                     req.rid,
-                    last_host_node,
+                    prefetch_anchor,
                     new_input_tokens,
                     last_hash,
                     prefix_keys,
+                    **(
+                        {"prefetch_base_len": matched_len}
+                        if getattr(self.tree_cache, "l2_prefetch_arena", None)
+                        is not None
+                        else {}
+                    ),
                 )
 
     def _add_request_to_queue(self, req: Req, is_retracted: bool = False):

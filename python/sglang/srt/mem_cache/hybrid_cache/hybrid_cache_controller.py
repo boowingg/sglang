@@ -124,8 +124,10 @@ class PrefetchOperation(StorageOperation):
         last_hash: Optional[str] = None,
         prefix_keys: Optional[List[str]] = None,
         pool_transfers: Optional[list[PoolTransfer]] = None,
+        host_release_callback: Optional[Callable[[torch.Tensor], None]] = None,
     ):
         self.request_id = request_id
+        self.host_release_callback = host_release_callback
         self._lock = threading.Lock()
         self._terminated_flag = False
         self.start_time = time.monotonic()
@@ -554,6 +556,7 @@ class HybridCacheController(BaseHiCacheController):
         last_hash: Optional[str] = None,
         prefix_keys: Optional[List[str]] = None,
         extra_pools: Optional[list[PoolTransfer]] = None,
+        host_release_callback: Optional[Callable[[torch.Tensor], None]] = None,
     ) -> PrefetchOperation:
         operation = PrefetchOperation(
             request_id,
@@ -562,6 +565,7 @@ class HybridCacheController(BaseHiCacheController):
             last_hash,
             prefix_keys=prefix_keys,
             pool_transfers=extra_pools,
+            host_release_callback=host_release_callback,
         )
         self.prefetch_queue.put(operation)
         return operation

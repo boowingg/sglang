@@ -17,7 +17,7 @@ import logging
 import threading
 import time
 from queue import Empty, Queue
-from typing import TYPE_CHECKING, List, NamedTuple, Optional
+from typing import TYPE_CHECKING, Callable, List, NamedTuple, Optional
 
 import torch
 
@@ -175,8 +175,10 @@ class PrefetchOperation(StorageOperation):
         token_ids: List[int],
         last_hash: Optional[str] = None,
         prefix_keys: Optional[List[str]] = None,
+        host_release_callback: Optional[Callable[[torch.Tensor], None]] = None,
     ):
         self.request_id = request_id
+        self.host_release_callback = host_release_callback
 
         self._lock = threading.Lock()
         self._terminated_flag = False
@@ -873,12 +875,18 @@ class HiCacheController:
         new_input_tokens: List[int],
         last_hash: Optional[str] = None,
         prefix_keys: Optional[List[str]] = None,
+        host_release_callback: Optional[Callable[[torch.Tensor], None]] = None,
     ) -> PrefetchOperation:
         """
         Prefetch KV caches from storage backend to host memory.
         """
         operation = PrefetchOperation(
-            request_id, host_indices, new_input_tokens, last_hash, prefix_keys
+            request_id,
+            host_indices,
+            new_input_tokens,
+            last_hash,
+            prefix_keys,
+            host_release_callback,
         )
         self.prefetch_queue.put(operation)
         return operation
@@ -893,6 +901,17 @@ class HiCacheController:
         pages = host_indices.split(self.mem_pool_host.page_size)
         for page in pages:
             self.host_mem_release_queue.put(page)
+
+    def release_prefetch_host_indices(
+        self, operation: PrefetchOperation, host_indices: torch.Tensor
+    ) -> None:
+        if host_indices.numel() == 0:
+            return
+        callback = getattr(operation, "host_release_callback", None)
+        if callback is not None:
+            callback(host_indices)
+        else:
+            self.append_host_mem_release(host_indices)
 
     def _page_get_zero_copy(
         self, operation, hash_values, host_indices, extra_info=None
@@ -974,8 +993,8 @@ class HiCacheController:
                     continue
                 self._page_transfer(operation)
                 # operation terminated by controller, release pre-allocated memory
-                self.append_host_mem_release(
-                    operation.host_indices[operation.completed_tokens :]
+                self.release_prefetch_host_indices(
+                    operation, operation.host_indices[operation.completed_tokens :]
                 )
             except Empty:
                 continue
@@ -1040,7 +1059,9 @@ class HiCacheController:
                 if storage_hit_count < self.prefetch_threshold:
                     # not to prefetch if not enough benefits
                     self.prefetch_revoke_queue.put(operation.request_id)
-                    self.append_host_mem_release(operation.host_indices)
+                    self.release_prefetch_host_indices(
+                        operation, operation.host_indices
+                    )
                     logger.debug(
                         f"Revoking prefetch for request {operation.request_id} due to insufficient hits ({storage_hit_count})."
                     )
@@ -1049,8 +1070,8 @@ class HiCacheController:
                         : (storage_hit_count // self.page_size)
                     ]
                     # free the pre-allocated memory for pages that are not hit
-                    self.append_host_mem_release(
-                        operation.host_indices[storage_hit_count:]
+                    self.release_prefetch_host_indices(
+                        operation, operation.host_indices[storage_hit_count:]
                     )
                     operation.host_indices = operation.host_indices[:storage_hit_count]
                     logger.debug(
