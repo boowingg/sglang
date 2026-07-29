@@ -42,6 +42,11 @@ from sglang.srt.mem_cache.hybrid_cache.hybrid_cache_controller import (
 from sglang.srt.mem_cache.hybrid_cache.hybrid_pool_assembler import (
     attach_hybrid_dsa_pool_to_hiradix_cache,
 )
+from sglang.srt.mem_cache.l2_prefetch_admission import (
+    L2PrefetchAdmission,
+    L2PrefetchAdmissionConfig,
+    log_l2_prefetch_admission_status,
+)
 from sglang.srt.mem_cache.memory_pool import (
     DSATokenToKVPool,
     MHATokenToKVPool,
@@ -123,6 +128,7 @@ class HiRadixCache(RadixCache):
             prefetch_threshold,
             prefetch_timeout_config,
             hicache_storage_pass_prefix_keys,
+            l2_prefetch_admission_config,
         ) = self._parse_storage_backend_extra_config(
             server_args.hicache_storage_backend_extra_config
         )
@@ -177,6 +183,8 @@ class HiRadixCache(RadixCache):
                 storage_backend_extra_config=extra_config,
                 enable_storage_metrics=self.enable_storage_metrics,
             )
+        self._l2_prefetch_admission = L2PrefetchAdmission(l2_prefetch_admission_config)
+        self._l2_prefetch_admission.apply_capacity_limit(self.cache_controller)
         self._apply_storage_runtime_config(
             storage_backend=server_args.hicache_storage_backend,
             prefetch_threshold=prefetch_threshold,
@@ -446,6 +454,7 @@ class HiRadixCache(RadixCache):
                 prefetch_threshold,
                 prefetch_timeout_config,
                 hicache_storage_pass_prefix_keys,
+                l2_prefetch_admission_config,
             ) = self._parse_storage_backend_extra_config(
                 storage_backend_extra_config_json
             )
@@ -470,6 +479,9 @@ class HiRadixCache(RadixCache):
             )
             return False, f"Failed to attach storage backend '{storage_backend}': {e}"
 
+        self._l2_prefetch_admission.configure(
+            l2_prefetch_admission_config, self.cache_controller
+        )
         self._apply_storage_runtime_config(
             storage_backend=storage_backend,
             prefetch_threshold=prefetch_threshold,
@@ -479,6 +491,7 @@ class HiRadixCache(RadixCache):
             enable_storage_metrics=self._enable_metrics_flag,
             extra_metric_labels=self.extra_metric_labels,
         )
+        log_l2_prefetch_admission_status(self)
         return True, "Attached HiCache storage backend successfully."
 
     def detach_storage_backend(self) -> tuple[bool, str]:
@@ -506,6 +519,7 @@ class HiRadixCache(RadixCache):
         # leftover pending ops (e.g., async prefetch/backup that didn't get a revoke/ack).
         self._force_release_pending_storage_ops()
 
+        self._l2_prefetch_admission.clear()
         self.enable_storage = False
         self.enable_storage_metrics = False
         return True, "Detached HiCache storage backend successfully."
@@ -644,7 +658,13 @@ class HiRadixCache(RadixCache):
             storage_backend_extra_config: JSON string containing extra configuration
 
         Returns:
-            tuple: (extra_config_dict, prefetch_threshold, prefetch_timeout_config, hicache_storage_pass_prefix_keys)
+            tuple: (
+                extra_config_dict,
+                prefetch_threshold,
+                prefetch_timeout_config,
+                hicache_storage_pass_prefix_keys,
+                l2_prefetch_admission_config,
+            )
         """
         # Parse extra config if provided. Extra config can be a JSON string or a json/toml/yaml file path prefixed with "@".
         extra_config = {}
@@ -690,6 +710,7 @@ class HiRadixCache(RadixCache):
         hicache_storage_pass_prefix_keys = extra_config.pop(
             "hicache_storage_pass_prefix_keys", False
         )
+        l2_prefetch_admission_config = L2PrefetchAdmissionConfig.pop_from(extra_config)
 
         if not isinstance(prefetch_threshold, int):
             raise ValueError(
@@ -724,11 +745,13 @@ class HiRadixCache(RadixCache):
             prefetch_threshold,
             prefetch_timeout_config,
             hicache_storage_pass_prefix_keys,
+            l2_prefetch_admission_config,
         )
 
     def reset(self):
         TreeNode.counter = 0
         self.cache_controller.reset()
+        self._l2_prefetch_admission.clear()
         self.token_to_kv_pool_host.clear()
         # Clear per-request tracking dicts
         self.prefetch_loaded_tokens_by_reqid.clear()
@@ -1183,10 +1206,11 @@ class HiRadixCache(RadixCache):
         )
 
         freed_device = 0
+        freed_host = False
         for n in nodes:
             if n.host_value is not None:
                 self._record_remove_event(n, medium=StorageMedium.CPU)
-                self.cache_controller.evict_host(n.host_value)
+                freed_host |= self.cache_controller.evict_host(n.host_value) > 0
                 n.host_value = None
             if n.value is not None:
                 self._record_remove_event(n, medium=StorageMedium.GPU)
@@ -1202,6 +1226,8 @@ class HiRadixCache(RadixCache):
         root.parent.children.pop(key, None)
         self._update_leaf_status(root.parent)
         self._update_host_leaf_status(root.parent)
+        if freed_host:
+            self._l2_prefetch_admission.capacity_changed()
         return freed_device
 
     def evict_host(self, num_tokens: int):
@@ -1238,6 +1264,8 @@ class HiRadixCache(RadixCache):
             if len(x.parent.children) == 0 and x.parent.evicted:
                 new_priority = self.eviction_strategy.get_priority(x.parent)
                 heapq.heappush(eviction_heap, (new_priority, x.parent))
+        if num_evicted:
+            self._l2_prefetch_admission.capacity_changed()
 
     def load_back(
         self, node: TreeNode, mem_quota: Optional[int] = None
@@ -1413,6 +1441,18 @@ class HiRadixCache(RadixCache):
         Combine prefetch revoke, backup ack, and host mem release checks
         to minimize TP synchronization and Python overhead.
         """
+        if self._l2_prefetch_admission.enabled:
+            expired = self._l2_prefetch_admission.drain_storage_control_queues(self)
+            if expired is not None:
+                req_id, waited = expired
+                logger.debug(
+                    "HiCache L2 prefetch wait timed out for request %s after "
+                    "%.2fs; falling back to recomputation",
+                    req_id,
+                    waited,
+                )
+            return
+
         cc = self.cache_controller
 
         qsizes = torch.tensor(
@@ -1527,6 +1567,7 @@ class HiRadixCache(RadixCache):
         last_host_node.release_host()
         del self.ongoing_prefetch[req_id]
         self.cache_controller.prefetch_tokens_occupied -= len(prefetch_key)
+        self._l2_prefetch_admission.capacity_changed(synchronized=True)
 
         # Track tokens actually loaded from storage for this request (L3 hits)
         loaded_from_storage = min_completed_tokens - matched_length
@@ -1538,6 +1579,8 @@ class HiRadixCache(RadixCache):
         return True
 
     def terminate_prefetch(self, req_id: str):
+        if self._l2_prefetch_admission.cancel(req_id):
+            return
         if req_id not in self.ongoing_prefetch:
             return
 
@@ -1833,6 +1876,7 @@ class HiRadixCache(RadixCache):
     def release_aborted_request(self, rid: str):
         # Clean up storage hit tracking for aborted request
         self.prefetch_loaded_tokens_by_reqid.pop(rid, None)
+        self._l2_prefetch_admission.cancel(rid)
 
         if rid not in self.ongoing_prefetch:
             return
@@ -1849,3 +1893,4 @@ class HiRadixCache(RadixCache):
         del self.ongoing_prefetch[rid]
         self.cache_controller.append_host_mem_release(host_indices[:completed_tokens])
         self.cache_controller.prefetch_tokens_occupied -= len(prefetch_key)
+        self._l2_prefetch_admission.capacity_changed(synchronized=True)

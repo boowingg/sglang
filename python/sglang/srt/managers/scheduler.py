@@ -225,6 +225,10 @@ from sglang.srt.managers.utils import (
 )
 from sglang.srt.mem_cache import kv_cache_builder
 from sglang.srt.mem_cache.common import maybe_cache_unfinished_req, release_kv_cache
+from sglang.srt.mem_cache.l2_prefetch_admission import (
+    get_l2_prefetch_admission,
+    prefetch_from_storage_with_admission,
+)
 from sglang.srt.model_executor.forward_batch_info import ForwardMode, PPProxyTensors
 from sglang.srt.model_loader.utils import get_resolved_model_impl
 from sglang.srt.multiplex.multiplexing_mixin import SchedulerMultiplexMixin
@@ -2286,7 +2290,7 @@ class Scheduler(
         for tokenized_req in recv_req:
             self.handle_generate_request(tokenized_req)
 
-    def _prefetch_kvcache(self, req: Req):
+    def _prefetch_kvcache(self, req: Req) -> bool:
         if self.enable_hicache_storage:
             req.init_next_round_input(self.tree_cache, cow_mamba=False)
             last_host_node = req.last_host_node
@@ -2303,13 +2307,16 @@ class Scheduler(
                     if self.tree_cache.hicache_storage_pass_prefix_keys
                     else None
                 )
-                self.tree_cache.prefetch_from_storage(
+                prefetch_from_storage_with_admission(
+                    self.tree_cache,
                     req.rid,
                     last_host_node,
                     new_input_tokens,
                     last_hash,
                     prefix_keys,
                 )
+                return True
+        return False
 
     def _add_request_to_queue(self, req: Req, is_retracted: bool = False):
         if not self._set_or_validate_priority(req):
@@ -2895,6 +2902,16 @@ class Scheduler(
                     break
 
             if self.enable_hicache_storage:
+                l2_admission = get_l2_prefetch_admission(self.tree_cache)
+                if l2_admission is not None and l2_admission.is_waiting(req.rid):
+                    if not l2_admission.can_retry(req.rid):
+                        continue
+                    # Waiting does not pin a radix node, so rematch before retry.
+                    if not self._prefetch_kvcache(req):
+                        l2_admission.cancel(req.rid)
+                    if l2_admission.is_waiting(req.rid):
+                        continue
+
                 prefetch_done = self.tree_cache.check_prefetch_progress(req.rid)
                 if not prefetch_done:
                     # skip staging requests that are ongoing prefetch

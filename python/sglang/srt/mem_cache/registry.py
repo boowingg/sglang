@@ -232,4 +232,10 @@ def create_tree_cache(ctx: TreeCacheBuildContext) -> BasePrefixCache:
         ctx.enable_hierarchical_cache,
         streaming_wrapped,
     )
+    if ctx.enable_hierarchical_cache:
+        from sglang.srt.mem_cache.l2_prefetch_admission import (
+            log_l2_prefetch_admission_status,
+        )
+
+        log_l2_prefetch_admission_status(cache)
     return cache

@@ -166,5 +166,9 @@ Specifically, **LMCache**, an efficient KV cache layer for enterprise-scale LLM 
 - **`--lmcache-config-file`**: Path to the LMCache YAML configuration file.
 
 - **`--hicache-storage-backend-extra-config HICACHE_STORAGE_BACKEND_EXTRA_CONFIG`**: the extra config can be either
-  - a JSON string containing extra configuration for the storage backend, e.g., `--hicache-storage-backend-extra-config '{"prefetch_threshold":512, "prefetch_timeout_base": 0.5, "prefetch_timeout_per_ki_token": 0.25}' `, or
+  - a JSON string containing extra configuration for the storage backend, e.g., `--hicache-storage-backend-extra-config '{"prefetch_threshold":512, "prefetch_timeout_base":0.5, "prefetch_timeout_per_ki_token":0.25, "enable_l2_prefetch_queue":true}' `, or
   - a TOML or JSON or YAML file specifying the extra configuration for the storage backend (to differentiate from the JSON string input, prepend a `@` in front of the file name), e.g., `--hicache-storage-backend-extra-config "@config.toml"` where `config.toml` is the config file containing the complex configurations. This can be useful when the configuration consists of many or complex key-value pairs (for instance, it is preferred to use a config file for NIXL backend as its configurations can be complex).
+  - `enable_l2_prefetch_queue` makes scheduler prefetches wait for L2 admission instead of dropping the L3 lookup when L2 is busy. It defaults to `false`, so applying this downstream feature does not change the original prefetch path unless explicitly enabled.
+  - `prefetch_capacity_ratio` sets the in-flight L3 prefetch admission threshold as a fraction of total L2 token capacity. It accepts values in `(0, 1]` and defaults to `0.5`.
+  - `l2_prefetch_wait_timeout` is the maximum number of seconds a request waits for L2 admission before falling back to recomputation. It must be greater than `0` and defaults to `30`.
+  - The startup log `HiCache L2 prefetch queue` reports the selected cache implementation and the `supported`, `enabled`, and `active` states. The queue currently supports `HiRadixCache`; `UnifiedRadixCache` reports `supported=false` and keeps the original prefetch behavior.
