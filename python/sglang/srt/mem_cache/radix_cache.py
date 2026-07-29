@@ -278,6 +278,8 @@ class TreeNode:
 
 
 class RadixCache(SessionRadixCacheMixin, KVCacheEventMixin, BasePrefixCache):
+    node_cls = TreeNode
+
     def __init__(self, params: CacheInitParams):
         self.disable = params.disable
         self.req_to_token_pool = params.req_to_token_pool
@@ -330,7 +332,7 @@ class RadixCache(SessionRadixCacheMixin, KVCacheEventMixin, BasePrefixCache):
 
     def reset(self):
         # Initialize root with minimum priority so any real priority overrides it
-        self.root_node = TreeNode(priority=-sys.maxsize)
+        self.root_node = self.node_cls(priority=-sys.maxsize)
         self.root_node.key = RadixKey(token_ids=array("q"), extra_key=None)
         self.root_node.value = []
         self.root_node.host_value = []
@@ -674,7 +676,7 @@ class RadixCache(SessionRadixCacheMixin, KVCacheEventMixin, BasePrefixCache):
     def _split_node(self, key: RadixKey, child: TreeNode, split_len: int):
         # new_node -> child
         # New node inherits child's priority (represents shared prefix)
-        new_node = TreeNode(priority=child.priority)
+        new_node = self.node_cls(priority=child.priority)
         new_node.hit_count = child.hit_count
         new_node.children = {key[split_len:].child_key(self.page_size): child}
         new_node.parent = child.parent
@@ -742,7 +744,7 @@ class RadixCache(SessionRadixCacheMixin, KVCacheEventMixin, BasePrefixCache):
                 child_key = key.child_key(self.page_size)
 
         if len(key):
-            new_node = TreeNode(priority=priority)
+            new_node = self.node_cls(priority=priority)
             new_node.parent = node
             new_node.key = key
             new_node.value = value.clone()

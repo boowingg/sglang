@@ -74,6 +74,8 @@ logger = logging.getLogger(__name__)
 
 class HiRadixCache(RadixCache):
 
+    cache_controller_cls = HiCacheController
+
     def __init__(self, params: CacheInitParams, server_args: ServerArgs):
         self._enable_metrics_flag = params.enable_metrics
 
@@ -160,7 +162,7 @@ class HiRadixCache(RadixCache):
                 attn_tp_group=self.attn_tp_group,
             )
         else:
-            self.cache_controller = HiCacheController(
+            self.cache_controller = self.cache_controller_cls(
                 params.token_to_kv_pool_allocator,
                 self.token_to_kv_pool_host,
                 self.page_size,

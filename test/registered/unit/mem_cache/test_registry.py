@@ -30,12 +30,14 @@ def _make_ctx(
     disable_radix_cache=False,
     effective_chunked_prefill_size=None,
     full_tokens_per_layer=None,
+    hicache_host_memory_mode="cache",
 ):
     server_args = MagicMock()
     server_args.radix_cache_backend = backend
     server_args.enable_streaming_session = enable_streaming
     server_args.enable_lmcache = enable_lmcache
     server_args.enable_flexkv = False
+    server_args.hicache_host_memory_mode = hicache_host_memory_mode
     return TreeCacheBuildContext(
         server_args=server_args,
         params=MagicMock(),
@@ -107,6 +109,28 @@ class TestCreateTreeCacheRouting(_RegistryIsolationMixin, CustomTestCase):
     def test_unknown_backend_raises(self):
         with self.assertRaises(ValueError):
             create_tree_cache(_make_ctx(backend="not_a_real_backend"))
+
+    def test_buffer_only_rejects_custom_backend(self):
+        register_radix_cache_backend("custom", MagicMock())
+        with self.assertRaisesRegex(ValueError, "custom radix-cache"):
+            create_tree_cache(
+                _make_ctx(backend="custom", hicache_host_memory_mode="buffer_only")
+            )
+
+    @patch("sglang.srt.mem_cache.buffer_only.factory.create_buffer_only_cache")
+    def test_buffer_only_routes_to_isolated_factory(self, create_buffer_cache):
+        cache = MagicMock()
+        cache.supports_streaming_session.return_value = True
+        create_buffer_cache.return_value = cache
+        ctx = _make_ctx(
+            enable_hierarchical_cache=True,
+            hicache_host_memory_mode="buffer_only",
+        )
+
+        result = create_tree_cache(ctx)
+
+        create_buffer_cache.assert_called_once_with(ctx)
+        self.assertIs(result, cache)
 
     @patch("sglang.srt.mem_cache.registry.default_radix_cache_factory")
     def test_unset_backend_falls_back_to_default(self, default_factory):

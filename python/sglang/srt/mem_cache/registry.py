@@ -198,7 +198,18 @@ def _create_unified_radix_cache(
 def create_tree_cache(ctx: TreeCacheBuildContext) -> BasePrefixCache:
     """Route to the matching factory to construct Radix Cache."""
     name = ctx.server_args.radix_cache_backend
-    if name:
+    if ctx.server_args.hicache_host_memory_mode == "buffer_only":
+        if name:
+            raise ValueError(
+                "HiCache buffer_only does not support custom radix-cache backends."
+            )
+        from sglang.srt.mem_cache.buffer_only.factory import (
+            create_buffer_only_cache,
+        )
+
+        cache = create_buffer_only_cache(ctx)
+        source = "builtin(buffer_only)"
+    elif name:
         factory = get_radix_cache_factory(name)
         if factory is None:
             raise ValueError(

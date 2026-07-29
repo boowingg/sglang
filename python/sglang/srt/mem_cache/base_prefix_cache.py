@@ -293,6 +293,13 @@ class BasePrefixCache(ABC, PrefixCacheTrait):
     def pretty_print(self):
         raise NotImplementedError()
 
+    def resolve_storage_prefetch_anchor(self, req: Req) -> Any:
+        """Return an eligible L3 prefetch anchor, or None to skip prefetch."""
+        node = req.last_host_node
+        if node.backuped or node is self.root_node:
+            return node
+        return None
+
     def init_load_back(
         self,
         params: InitLoadBackParams,
