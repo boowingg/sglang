@@ -1443,13 +1443,13 @@ class HiRadixCache(RadixCache):
         """
         if self._l2_prefetch_admission.enabled:
             expired = self._l2_prefetch_admission.drain_storage_control_queues(self)
-            if expired:
+            if expired is not None:
+                req_id, waited = expired
                 logger.debug(
-                    "HiCache L2 prefetch wait timed out for %d requests "
-                    "(oldest=%s, max_wait=%.2fs); falling back to recomputation",
-                    len(expired),
-                    expired[0][0],
-                    max(waited for _, waited in expired),
+                    "HiCache L2 prefetch wait timed out for request %s after "
+                    "%.2fs; falling back to recomputation",
+                    req_id,
+                    waited,
                 )
             return
 

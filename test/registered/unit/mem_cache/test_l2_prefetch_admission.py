@@ -119,7 +119,6 @@ class _FakeCache:
         self.peer_min_tokens = None
         self.peer_blocked = False
         self.peer_capacity_changed = False
-        self.peer_expired_count = None
         self.eviction_calls = []
         self.drain_calls = []
 
@@ -132,12 +131,6 @@ class _FakeCache:
             and len(tensor) == 5
         ):
             tensor[-1] = 0
-        if (
-            op == torch.distributed.ReduceOp.MIN
-            and self.peer_expired_count is not None
-            and len(tensor) == 5
-        ):
-            tensor[-2] = min(int(tensor[-2]), -self.peer_expired_count)
         elif op == torch.distributed.ReduceOp.MAX and self.peer_blocked:
             tensor.fill_(1)
 
@@ -251,23 +244,8 @@ class TestL2PrefetchAdmissionState(unittest.TestCase):
 
         self.assertTrue(admission.can_retry("first"))
         self.assertTrue(admission.can_retry("second"))
-        self.assertTrue(admission.claim_retry("first"))
-        self.assertFalse(admission.claim_retry("second"))
         self.assertFalse(admission.should_wait_behind_existing("second"))
         self.assertTrue(admission.should_wait_behind_existing("new"))
-
-    def test_failed_retry_blocks_other_probes_until_capacity_changes(self):
-        admission = L2PrefetchAdmission(_enabled_config())
-        admission.enqueue("first")
-        admission.enqueue("second")
-        admission.capacity_changed(synchronized=True)
-        self.assertTrue(admission.claim_retry("first"))
-
-        admission.enqueue("first")
-
-        self.assertFalse(admission.claim_retry("second"))
-        admission.capacity_changed(synchronized=True)
-        self.assertTrue(admission.claim_retry("second"))
 
     def test_failed_retry_waits_for_next_capacity_generation(self):
         admission = L2PrefetchAdmission(_enabled_config())
@@ -289,15 +267,6 @@ class TestL2PrefetchAdmissionState(unittest.TestCase):
         admission.cancel("first")
 
         self.assertTrue(admission.can_retry("second"))
-
-    def test_removing_non_head_does_not_wake_failed_head(self):
-        admission = L2PrefetchAdmission(_enabled_config())
-        admission.enqueue("first")
-        admission.enqueue("second")
-
-        admission.cancel("second")
-
-        self.assertFalse(admission.can_retry("first"))
 
     def test_requeue_preserves_original_timeout(self):
         clock = _Clock()
@@ -405,22 +374,6 @@ class TestL2PrefetchAdmissionIO(unittest.TestCase):
         self.assertEqual(node.protection, 0)
         self.assertEqual(cache.eviction_calls, [8])
 
-    def test_one_capacity_generation_triggers_only_one_eviction_probe(self):
-        controller = _FakeController(_FakeHostPool([None, None], available_size=0))
-        cache = _FakeCache(controller)
-        admission = L2PrefetchAdmission(_enabled_config())
-        admission.enqueue("first")
-        admission.enqueue("second")
-        admission.capacity_changed(synchronized=True)
-
-        self.assertTrue(admission.claim_retry("first"))
-        admission.prefetch(cache, "first", _FakeNode(), range(8))
-        self.assertFalse(admission.claim_retry("second"))
-
-        self.assertEqual(cache.eviction_calls, [8])
-        self.assertTrue(admission.is_waiting("first"))
-        self.assertTrue(admission.is_waiting("second"))
-
     def test_partial_allocation_is_page_aligned_and_bounded(self):
         host_pool = _FakeHostPool([None, None, 6], available_size=7)
         controller = _FakeController(host_pool)
@@ -505,7 +458,7 @@ class TestL2PrefetchAdmissionIO(unittest.TestCase):
 
         expired = admission.drain_storage_control_queues(cache)
 
-        self.assertEqual(expired, [("req", 6.0)])
+        self.assertEqual(expired, ("req", 6.0))
         self.assertEqual(
             cache.drain_calls,
             [
@@ -517,38 +470,6 @@ class TestL2PrefetchAdmissionIO(unittest.TestCase):
                 }
             ],
         )
-
-    def test_drain_expires_entire_expired_prefix(self):
-        clock = _Clock()
-        controller = _FakeController(_FakeHostPool([]))
-        cache = _FakeCache(controller)
-        admission = L2PrefetchAdmission(_enabled_config(wait_timeout=5), clock=clock)
-        admission.enqueue("first")
-        admission.enqueue("second")
-        clock.advance(3)
-        admission.enqueue("third")
-        clock.advance(3)
-
-        expired = admission.drain_storage_control_queues(cache)
-
-        self.assertEqual(expired, [("first", 6.0), ("second", 6.0)])
-        self.assertFalse(admission.is_waiting("first"))
-        self.assertFalse(admission.is_waiting("second"))
-        self.assertTrue(admission.is_waiting("third"))
-        self.assertTrue(admission.claim_retry("third"))
-
-    def test_peer_expiration_count_is_applied_locally(self):
-        controller = _FakeController(_FakeHostPool([]))
-        cache = _FakeCache(controller)
-        cache.peer_expired_count = 2
-        admission = L2PrefetchAdmission(_enabled_config(wait_timeout=30))
-        admission.enqueue("first")
-        admission.enqueue("second")
-
-        expired = admission.drain_storage_control_queues(cache)
-
-        self.assertEqual([req_id for req_id, _ in expired], ["first", "second"])
-        self.assertEqual(admission.waiting_count, 0)
 
     def test_local_capacity_change_is_published_by_control_queue_drain(self):
         controller = _FakeController(_FakeHostPool([]))
