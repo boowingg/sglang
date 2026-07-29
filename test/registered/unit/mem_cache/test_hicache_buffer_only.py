@@ -1,4 +1,5 @@
 import inspect
+import threading
 import unittest
 from array import array
 from collections import deque
@@ -186,6 +187,28 @@ class TestHiCacheBufferOnly(unittest.TestCase):
 
         self.assertFalse(operation.increment(4))
         self.assertEqual(operation.completed_tokens, 4)
+
+    def test_prefetch_io_publishes_done_after_last_host_index_access(self):
+        controller = BufferOnlyHiCacheController.__new__(
+            BufferOnlyHiCacheController
+        )
+        controller.storage_stop_event = threading.Event()
+        controller.prefetch_buffer = Queue()
+        controller.prefetch_done_queue = Queue()
+        controller._page_transfer = MagicMock()
+
+        operation = PrefetchOperation("req", torch.arange(2), [1, 2])
+        controller.prefetch_buffer.put(operation)
+
+        def release_suffix(_indices):
+            self.assertFalse(operation.io_done)
+            controller.storage_stop_event.set()
+
+        controller.append_host_mem_release = release_suffix
+        controller.prefetch_io_aux_func()
+
+        self.assertTrue(operation.io_done)
+        self.assertEqual(controller.prefetch_done_queue.get_nowait(), "req")
 
     def test_buffer_write_locks_source_when_it_is_enqueued(self):
         cache = BufferOnlyHiRadixCache.__new__(BufferOnlyHiRadixCache)
@@ -570,11 +593,12 @@ class TestHiCacheBufferOnly(unittest.TestCase):
             prefetch_buffer=Queue(),
         )
         cache.cache_controller = controller
+        cache.root_node = _node([], values=[])
 
         operation = PrefetchOperation("req", None, list(range(100)))
         operation.set_query_result([f"h{i}" for i in range(50)], 100)
         context = PrefetchContext(
-            anchor=_node([], values=[]),
+            anchor=cache.root_node,
             key=RadixKey(array("q", range(100))),
             operation=operation,
         )
@@ -585,7 +609,7 @@ class TestHiCacheBufferOnly(unittest.TestCase):
         operation2 = PrefetchOperation("req2", None, list(range(100)))
         operation2.set_query_result([f"h{i}" for i in range(50)], 100)
         context2 = PrefetchContext(
-            anchor=_node([], values=[]),
+            anchor=cache.root_node,
             key=RadixKey(array("q", range(100))),
             operation=operation2,
         )
@@ -643,10 +667,17 @@ class TestHiCacheBufferOnly(unittest.TestCase):
         )
         cache.cache_controller = controller
 
-        anchor = _node([], values=[])
-        cache.prefetch_from_storage("req", anchor, list(range(20)))
+        root = _node([], values=[])
+        anchor = _node([20, 21], parent=root, values=[30, 31])
+        anchor.hash_value = ["h1"]
+        root.children[anchor.key.child_key(cache.page_size)] = anchor
+        cache.root_node = root
+        cache.prefetch_from_storage(
+            "req", anchor, list(range(20)), last_hash="h1"
+        )
 
         controller.prefetch.assert_not_called()
+        cache.inc_lock_ref.assert_not_called()
         self.assertEqual(list(cache.pending_prefetch_query), ["req"])
         self.assertIsNone(cache.ongoing_prefetch["req"].operation)
 
@@ -677,6 +708,152 @@ class TestHiCacheBufferOnly(unittest.TestCase):
 
         controller.prefetch.assert_not_called()
         self.assertEqual(list(cache.pending_prefetch_query), ["req"])
+
+    def test_prefetch_protects_anchor_only_after_l2_allocation(self):
+        cache = BufferOnlyHiRadixCache.__new__(BufferOnlyHiRadixCache)
+        cache.page_size = 2
+        cache.prefetch_threshold = 2
+        cache.buffer_write_reserve_ratio = 0.2
+        cache.ongoing_write_through = {}
+        cache.ongoing_backup = {}
+        cache._all_reduce_attn_groups = lambda tensor, op: None
+        cache.inc_lock_ref = MagicMock()
+
+        root = _node([], values=[])
+        anchor = _node([1, 2], parent=root, values=[10, 11])
+        anchor.hash_value = ["h1"]
+        root.children[anchor.key.child_key(cache.page_size)] = anchor
+        cache.root_node = root
+
+        mem_pool_host = MagicMock()
+        mem_pool_host.size = 4
+        mem_pool_host.available_size.return_value = 4
+        mem_pool_host.alloc.return_value = torch.arange(2)
+        cache.cache_controller = SimpleNamespace(
+            mem_pool_host=mem_pool_host,
+            prefetch_tokens_occupied=0,
+            prefetch_buffer=Queue(),
+        )
+
+        operation = PrefetchOperation("req", None, [3, 4], "h1")
+        operation.set_query_result(["h2"], 2)
+        context = PrefetchContext(
+            anchor=anchor,
+            key=RadixKey(array("q", [3, 4])),
+            operation=operation,
+            last_hash="h1",
+        )
+
+        self.assertTrue(cache._allocate_buffer_prefetch(context))
+        self.assertTrue(context.anchor_device_locked)
+        cache.inc_lock_ref.assert_called_once_with(anchor)
+
+    def test_invalidated_queued_anchor_falls_back_without_retrying_forever(self):
+        cache = BufferOnlyHiRadixCache.__new__(BufferOnlyHiRadixCache)
+        cache.page_size = 2
+        cache.prefetch_threshold = 2
+        cache.prefetch_stop_policy = "wait_complete"
+        cache.buffer_write_reserve_ratio = 0.2
+        cache.buffer_query_tokens_occupied = 2
+        cache.ongoing_write_through = {}
+        cache.ongoing_backup = {}
+        cache.pending_prefetch_alloc = deque(["req"])
+        cache._all_reduce_attn_groups = lambda tensor, op: None
+
+        root = _node([], values=[])
+        detached_anchor = _node([1, 2], parent=root, values=[10, 11])
+        detached_anchor.hash_value = ["h1"]
+        cache.root_node = root
+
+        operation = PrefetchOperation("req", None, [3, 4], "h1")
+        operation.set_query_result(["h2"], 2)
+        context = PrefetchContext(
+            anchor=detached_anchor,
+            key=RadixKey(array("q", [3, 4])),
+            operation=operation,
+            query_tokens_reserved=2,
+            last_hash="h1",
+        )
+        cache.ongoing_prefetch = {"req": context}
+
+        mem_pool_host = MagicMock()
+        mem_pool_host.size = 4
+        mem_pool_host.available_size.return_value = 4
+        cache.cache_controller = SimpleNamespace(
+            mem_pool_host=mem_pool_host,
+            prefetch_tokens_occupied=0,
+            prefetch_buffer=Queue(),
+        )
+
+        cache._dispatch_pending_prefetch_alloc(1)
+
+        self.assertNotIn("req", cache.ongoing_prefetch)
+        self.assertEqual(cache.buffer_query_tokens_occupied, 0)
+        self.assertTrue(operation.is_terminated())
+        mem_pool_host.alloc.assert_not_called()
+
+    def test_completed_prefetch_is_finalized_without_waiting_queue_admission(self):
+        cache = BufferOnlyHiRadixCache.__new__(BufferOnlyHiRadixCache)
+        cache.page_size = 2
+        cache.buffer_only = True
+        cache.prefetch_stop_policy = "wait_complete"
+        cache.enable_storage_metrics = False
+        cache.prefetch_loaded_tokens_by_reqid = {}
+        cache._all_reduce_attn_groups = lambda tensor, op: None
+        cache._insert_helper_host = MagicMock(return_value=0)
+        cache.dec_lock_ref = MagicMock()
+
+        root = _node([], values=[])
+        anchor = _node([1, 2], parent=root, values=[10, 11])
+        anchor.hash_value = ["h1"]
+        root.children[anchor.key.child_key(cache.page_size)] = anchor
+        cache.root_node = root
+
+        host_indices = torch.arange(2)
+        operation = PrefetchOperation("req", None, [3, 4], "h1")
+        operation.set_query_result(["h2"], 2)
+        operation.host_indices = host_indices
+        operation.completed_tokens = 2
+        operation.mark_io_started()
+        operation.mark_io_done()
+        context = PrefetchContext(
+            anchor=anchor,
+            key=RadixKey(array("q", [3, 4])),
+            operation=operation,
+            host_indices=host_indices,
+            allocated_tokens=2,
+            anchor_device_locked=True,
+            last_hash="h1",
+        )
+        cache.ongoing_prefetch = {"req": context}
+
+        mem_pool_host = MagicMock()
+        controller = SimpleNamespace(
+            prefetch_revoke_queue=Queue(),
+            prefetch_hit_queue=Queue(),
+            prefetch_done_queue=Queue(),
+            ack_backup_queue=Queue(),
+            host_mem_release_queue=Queue(),
+            mem_pool_host=mem_pool_host,
+            prefetch_tokens_occupied=2,
+            terminate_prefetch=lambda op: (op.completed_tokens, op.hash_value),
+            append_host_mem_release=MagicMock(),
+        )
+        controller.prefetch_done_queue.put("req")
+        cache.cache_controller = controller
+
+        cache._drain_storage_control_queues_impl(
+            n_revoke=0,
+            n_hit=0,
+            n_done=1,
+            n_backup=0,
+            n_release=0,
+            log_metrics=False,
+        )
+
+        self.assertNotIn("req", cache.ongoing_prefetch)
+        self.assertEqual(cache.prefetch_loaded_tokens_by_reqid["req"], 2)
+        cache.dec_lock_ref.assert_called_once_with(anchor)
 
     def test_prefetch_io_timeout_starts_when_io_is_admitted(self):
         cache = BufferOnlyHiRadixCache.__new__(BufferOnlyHiRadixCache)

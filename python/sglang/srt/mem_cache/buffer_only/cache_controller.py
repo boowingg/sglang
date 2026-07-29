@@ -114,6 +114,7 @@ class BufferOnlyHiCacheController(HiCacheController):
 
         self.prefetch_revoke_queue: Queue[str] = Queue()
         self.prefetch_hit_queue: Queue[BufferPrefetchOperation] = Queue()
+        self.prefetch_done_queue: Queue[str] = Queue()
         self.ack_backup_queue: Queue[StorageOperation] = Queue()
         self.host_mem_release_queue: Queue[torch.Tensor] = Queue()
 
@@ -193,12 +194,15 @@ class BufferOnlyHiCacheController(HiCacheController):
                         "Prefetch I/O failed for request %s", operation.request_id
                     )
                 finally:
-                    operation.mark_io_done()
                     # The scheduler owns completed pages; return only the unused
                     # suffix after the I/O thread has stopped touching it.
                     self.append_host_mem_release(
                         operation.host_indices[operation.completed_tokens :]
                     )
+                    # Publish completion only after the I/O thread has finished
+                    # every access to host_indices.
+                    operation.mark_io_done()
+                    self.prefetch_done_queue.put(operation.request_id)
             except Empty:
                 continue
 

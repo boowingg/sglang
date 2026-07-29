@@ -27,13 +27,17 @@ owned by this package.
    L3 acknowledgement, rather than D2H completion, advances
    `storage_backed_tokens`.
 3. L3 reads query the continuous hit length before allocating L2 pages. The
-   scheduler allocates only the confirmed prefix.
+   scheduler allocates only the confirmed prefix. A queued query does not pin
+   its L1/L2 anchor; protection starts only after L2 allocation succeeds.
 4. A node under H2D is hidden from normal prefix matching until its completion
    event is synchronized.
 5. Queue decisions and allocations use the same collective ordering on every
    attention rank. Divergent write identities or states fail fast.
 6. Partial reads, partial writes, cancellation, reset, and shutdown release
    only memory no longer touched by an I/O thread or device stream.
+7. Completed L3 reads are finalized from the I/O completion queue, independent
+   of waiting-request order, so a memory-blocked queue head cannot retain L2
+   pages or L1 anchor locks owned by later requests.
 
 ## Upgrade checklist
 

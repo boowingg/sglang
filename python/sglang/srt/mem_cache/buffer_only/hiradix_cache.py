@@ -41,6 +41,11 @@ _BUFFER_WRITE_INVALID = 3
 _BUFFER_WRITE_IN_FLIGHT = 4
 _BUFFER_WRITE_L3_RETRY = 5
 
+_PREFETCH_ANCHOR_INVALID = 0
+_PREFETCH_ANCHOR_ROOT = 1
+_PREFETCH_ANCHOR_DEVICE = 2
+_PREFETCH_ANCHOR_HOST = 3
+
 
 @dataclass
 class WriteThroughContext:
@@ -76,6 +81,8 @@ class PrefetchContext:
     host_indices: Optional[torch.Tensor] = None
     allocated_tokens: int = 0
     anchor_device_locked: bool = False
+    anchor_host_locked: bool = False
+    anchor_invalid: bool = False
     aborted: bool = False
     query_tokens_reserved: int = 0
     last_hash: Optional[str] = None
@@ -276,6 +283,7 @@ class BufferOnlyHiRadixCache(HiRadixCache):
         self._drain_storage_control_queues_impl(
             n_revoke=None,
             n_hit=None,
+            n_done=None,
             n_backup=None,
             n_release=None,
             log_metrics=False,
@@ -288,6 +296,7 @@ class BufferOnlyHiRadixCache(HiRadixCache):
         n_backup: Optional[int],
         n_release: Optional[int],
         log_metrics: bool,
+        n_done: Optional[int] = 0,
     ):
         cc = self.cache_controller
 
@@ -318,6 +327,24 @@ class BufferOnlyHiRadixCache(HiRadixCache):
                     self.ongoing_prefetch.pop(operation.request_id, None)
                     continue
                 self.pending_prefetch_alloc.append(operation.request_id)
+
+        def _drain_done():
+            if n_done == 0:
+                return
+            for req_id in _drain_queue(cc.prefetch_done_queue, n_done):
+                context = self.ongoing_prefetch.get(req_id)
+                if context is None:
+                    continue
+                if n_done is None or context.aborted:
+                    # Shutdown/detach drains locally without collectives and
+                    # does not need to publish the completed data into the tree.
+                    self.ongoing_prefetch.pop(req_id, None)
+                    self._release_prefetch_context(context, free_completed=True)
+                    continue
+                # Finalize completed reads independently of waiting-queue order.
+                # Otherwise a NO_TOKEN request at the queue head can retain both
+                # its L2 result and the L1 anchor locks owned by later requests.
+                self.check_prefetch_progress(req_id)
 
         def _drain_backup():
             for operation in _drain_queue(cc.ack_backup_queue, n_backup):
@@ -389,6 +416,7 @@ class BufferOnlyHiRadixCache(HiRadixCache):
 
         _drain_revoke()
         _drain_hits()
+        _drain_done()
         _drain_backup()
         _drain_release()
 
@@ -1263,6 +1291,7 @@ class BufferOnlyHiRadixCache(HiRadixCache):
             [
                 cc.prefetch_revoke_queue.qsize(),
                 cc.prefetch_hit_queue.qsize(),
+                cc.prefetch_done_queue.qsize(),
                 cc.ack_backup_queue.qsize(),
                 cc.host_mem_release_queue.qsize(),
                 len(self.pending_write_through),
@@ -1280,6 +1309,7 @@ class BufferOnlyHiRadixCache(HiRadixCache):
         (
             n_revoke,
             n_hit,
+            n_done,
             n_backup,
             n_release,
             n_pending_write,
@@ -1290,6 +1320,7 @@ class BufferOnlyHiRadixCache(HiRadixCache):
         self._drain_storage_control_queues_impl(
             n_revoke=n_revoke,
             n_hit=n_hit,
+            n_done=n_done,
             n_backup=n_backup,
             n_release=n_release,
             log_metrics=True,
@@ -1324,8 +1355,9 @@ class BufferOnlyHiRadixCache(HiRadixCache):
         if context.anchor_device_locked:
             self.dec_lock_ref(context.anchor)
             context.anchor_device_locked = False
-        else:
+        if context.anchor_host_locked:
             context.anchor.release_host()
+            context.anchor_host_locked = False
         self.cache_controller.prefetch_tokens_occupied = max(
             0,
             self.cache_controller.prefetch_tokens_occupied - context.allocated_tokens,
@@ -1399,6 +1431,40 @@ class BufferOnlyHiRadixCache(HiRadixCache):
                 self._update_leaf_status(parent)
                 self._update_host_leaf_status(parent)
 
+    def _node_is_attached(self, node: TreeNode) -> bool:
+        while node is not self.root_node:
+            parent = node.parent
+            if (
+                parent is None
+                or parent.children.get(node.key.child_key(self.page_size)) is not node
+            ):
+                return False
+            node = parent
+        return True
+
+    def _prefetch_anchor_medium(self, context: PrefetchContext) -> int:
+        anchor = context.anchor
+        if anchor is self.root_node:
+            return _PREFETCH_ANCHOR_ROOT
+        if (
+            not self._node_is_attached(anchor)
+            or anchor.get_last_hash_value() != context.last_hash
+        ):
+            return _PREFETCH_ANCHOR_INVALID
+        if not anchor.evicted:
+            return _PREFETCH_ANCHOR_DEVICE
+        if anchor.host_value is not None:
+            return _PREFETCH_ANCHOR_HOST
+        return _PREFETCH_ANCHOR_INVALID
+
+    def _protect_prefetch_anchor(self, context: PrefetchContext, medium: int) -> None:
+        if medium == _PREFETCH_ANCHOR_DEVICE:
+            self.inc_lock_ref(context.anchor)
+            context.anchor_device_locked = True
+        elif medium == _PREFETCH_ANCHOR_HOST:
+            context.anchor.protect_host()
+            context.anchor_host_locked = True
+
     def _allocate_buffer_prefetch(self, context: PrefetchContext) -> bool:
         operation = context.operation
         if operation is None:
@@ -1417,9 +1483,13 @@ class BufferOnlyHiRadixCache(HiRadixCache):
         allocatable = max(0, available - reserve)
         allocatable -= allocatable % self.page_size
         target = min(operation.storage_hit_count, allocatable)
-        target_tensor = torch.tensor(target, dtype=torch.int)
-        self._all_reduce_attn_groups(target_tensor, torch.distributed.ReduceOp.MIN)
-        target = int(target_tensor.item())
+        local_medium = self._prefetch_anchor_medium(context)
+        admission = torch.tensor([target, local_medium, -local_medium], dtype=torch.int)
+        self._all_reduce_attn_groups(admission, torch.distributed.ReduceOp.MIN)
+        target, medium, neg_max_medium = map(int, admission.tolist())
+        if medium != -neg_max_medium or medium == _PREFETCH_ANCHOR_INVALID:
+            context.anchor_invalid = True
+            return False
         if target < self.prefetch_threshold:
             return False
 
@@ -1431,6 +1501,7 @@ class BufferOnlyHiRadixCache(HiRadixCache):
                 self.cache_controller.mem_pool_host.free(host_indices)
             return False
 
+        self._protect_prefetch_anchor(context, medium)
         context.host_indices = host_indices
         context.allocated_tokens = target
         self._release_query_reservation(context)
@@ -1486,6 +1557,11 @@ class BufferOnlyHiRadixCache(HiRadixCache):
             if context is None or context.aborted:
                 continue
             if not self._allocate_buffer_prefetch(context):
+                if context.anchor_invalid:
+                    context.operation.mark_terminate()
+                    self.ongoing_prefetch.pop(req_id, None)
+                    self._release_prefetch_context(context, free_completed=True)
+                    continue
                 cancel_local = self.prefetch_stop_policy == "best_effort" or (
                     self.prefetch_stop_policy == "timeout"
                     and self._is_prefetch_allocation_timeout(context.operation)
@@ -1645,8 +1721,10 @@ class BufferOnlyHiRadixCache(HiRadixCache):
         )
         if context.anchor_device_locked:
             self.dec_lock_ref(context.anchor)
-        else:
+            context.anchor_device_locked = False
+        if context.anchor_host_locked:
             context.anchor.release_host()
+            context.anchor_host_locked = False
         del self.ongoing_prefetch[req_id]
         self.cache_controller.prefetch_tokens_occupied -= context.allocated_tokens
         context.host_indices = None
@@ -1706,15 +1784,12 @@ class BufferOnlyHiRadixCache(HiRadixCache):
             return
 
         if self.buffer_only:
-            anchor_device_locked = not last_host_node.evicted
-            if anchor_device_locked:
-                self.inc_lock_ref(last_host_node)
-            else:
-                last_host_node.protect_host()
+            # Querying L3 does not consume L2 yet. Delay anchor protection until
+            # the confirmed hit has L2 pages and can make independent I/O
+            # progress; queued queries must not pin all of a small L1.
             self.ongoing_prefetch[req_id] = PrefetchContext(
                 anchor=last_host_node,
                 key=prefetch_key,
-                anchor_device_locked=anchor_device_locked,
                 last_hash=last_hash,
                 prefix_keys=prefix_keys,
             )
