@@ -65,12 +65,18 @@ class L2PrefetchAdmissionConfig:
 
 @dataclass
 class _WaitingPrefetch:
-    enqueued_at: float
+    # Only the current FIFO head owns a timeout budget.
+    head_since: Optional[float]
     failed_capacity_generation: int
 
 
 class L2PrefetchAdmission:
-    """Optional admission queue for L3 prefetches waiting on L2 capacity."""
+    """Optional FIFO admission queue for L3 prefetches waiting on L2 capacity.
+
+    Followers do not age out while blocked behind an older request. Their timeout
+    starts when they become the queue head, so one expired head cannot turn into
+    a cascade of requests that fall back without an admission opportunity.
+    """
 
     def __init__(
         self,
@@ -127,8 +133,9 @@ class L2PrefetchAdmission:
 
         state = self._waiters.get(req_id)
         if state is None:
+            is_first = not self._waiters
             self._waiters[req_id] = _WaitingPrefetch(
-                enqueued_at=self._clock(),
+                head_since=self._clock() if is_first else None,
                 failed_capacity_generation=self._capacity_generation,
             )
         else:
@@ -144,8 +151,11 @@ class L2PrefetchAdmission:
         )
 
     def cancel(self, req_id: str) -> bool:
+        was_oldest = self.oldest_req_id == req_id
         removed = self._waiters.pop(req_id, None) is not None
         if removed and self._waiters:
+            if was_oldest:
+                self._activate_oldest()
             self._advance_capacity_generation()
         return removed
 
@@ -162,18 +172,22 @@ class L2PrefetchAdmission:
         oldest_req_id = self.oldest_req_id
         if oldest_req_id is None:
             return False
-        return (
-            self._clock() - self._waiters[oldest_req_id].enqueued_at
-            >= self.config.wait_timeout
-        )
+        state = self._waiters[oldest_req_id]
+        head_since = state.head_since
+        if head_since is None:
+            state.head_since = self._clock()
+            return False
+        return self._clock() - head_since >= self.config.wait_timeout
 
     def expire_oldest(self) -> Optional[tuple[str, float]]:
         oldest_req_id = self.oldest_req_id
         if oldest_req_id is None:
             return None
         state = self._waiters.pop(oldest_req_id)
-        waited = self._clock() - state.enqueued_at
+        now = self._clock()
+        waited = now - (state.head_since if state.head_since is not None else now)
         if self._waiters:
+            self._activate_oldest(now)
             self._advance_capacity_generation()
         return oldest_req_id, waited
 
@@ -216,6 +230,14 @@ class L2PrefetchAdmission:
     def _advance_capacity_generation(self) -> None:
         if self._waiters:
             self._capacity_generation += 1
+
+    def _activate_oldest(self, now: Optional[float] = None) -> None:
+        oldest_req_id = self.oldest_req_id
+        if oldest_req_id is None:
+            return
+        state = self._waiters[oldest_req_id]
+        if state.head_since is None:
+            state.head_since = self._clock() if now is None else now
 
     def prefetch(
         self,

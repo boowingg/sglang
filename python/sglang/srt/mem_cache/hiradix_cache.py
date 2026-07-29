@@ -1446,8 +1446,8 @@ class HiRadixCache(RadixCache):
             if expired is not None:
                 req_id, waited = expired
                 logger.debug(
-                    "HiCache L2 prefetch wait timed out for request %s after "
-                    "%.2fs; falling back to recomputation",
+                    "HiCache L2 prefetch head wait timed out for request %s "
+                    "after %.2fs; falling back to recomputation",
                     req_id,
                     waited,
                 )

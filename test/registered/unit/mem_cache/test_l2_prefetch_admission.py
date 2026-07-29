@@ -289,6 +289,47 @@ class TestL2PrefetchAdmissionState(unittest.TestCase):
         self.assertEqual(admission.expire_oldest(), ("first", 6.0))
         self.assertTrue(admission.can_retry("second"))
 
+    def test_follower_timeout_starts_only_after_head_promotion(self):
+        clock = _Clock()
+        admission = L2PrefetchAdmission(_enabled_config(wait_timeout=10), clock=clock)
+        admission.enqueue("first")
+        admission.enqueue("second")
+        clock.advance(11)
+
+        self.assertEqual(admission.expire_oldest(), ("first", 11.0))
+        self.assertFalse(admission.oldest_expired())
+
+        clock.advance(9)
+        self.assertFalse(admission.oldest_expired())
+        clock.advance(1)
+        self.assertTrue(admission.oldest_expired())
+        self.assertEqual(admission.expire_oldest(), ("second", 10.0))
+
+    def test_canceling_head_starts_next_waiter_timeout(self):
+        clock = _Clock()
+        admission = L2PrefetchAdmission(_enabled_config(wait_timeout=10), clock=clock)
+        admission.enqueue("first")
+        admission.enqueue("second")
+        clock.advance(20)
+
+        admission.cancel("first")
+
+        self.assertFalse(admission.oldest_expired())
+        clock.advance(10)
+        self.assertTrue(admission.oldest_expired())
+
+    def test_canceling_follower_does_not_reset_head_timeout(self):
+        clock = _Clock()
+        admission = L2PrefetchAdmission(_enabled_config(wait_timeout=10), clock=clock)
+        admission.enqueue("first")
+        admission.enqueue("second")
+        clock.advance(6)
+
+        admission.cancel("second")
+        clock.advance(4)
+
+        self.assertTrue(admission.oldest_expired())
+
     def test_configure_clears_waiters_and_applies_capacity_ratio(self):
         controller = _FakeController(_FakeHostPool([], size=200))
         admission = L2PrefetchAdmission(_enabled_config())
@@ -469,6 +510,25 @@ class TestL2PrefetchAdmissionIO(unittest.TestCase):
                     "log_metrics": True,
                 }
             ],
+        )
+
+    def test_control_queue_drain_does_not_cascade_expired_followers(self):
+        clock = _Clock()
+        controller = _FakeController(_FakeHostPool([]))
+        cache = _FakeCache(controller)
+        admission = L2PrefetchAdmission(_enabled_config(wait_timeout=5), clock=clock)
+        admission.enqueue("first")
+        admission.enqueue("second")
+        clock.advance(6)
+
+        first_expired = admission.drain_storage_control_queues(cache)
+        second_expired = admission.drain_storage_control_queues(cache)
+
+        self.assertEqual(first_expired, ("first", 6.0))
+        self.assertIsNone(second_expired)
+        clock.advance(5)
+        self.assertEqual(
+            admission.drain_storage_control_queues(cache), ("second", 5.0)
         )
 
     def test_local_capacity_change_is_published_by_control_queue_drain(self):
