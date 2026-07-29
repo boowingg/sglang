@@ -139,14 +139,6 @@ class L2PrefetchAdmission:
             state.failed_capacity_generation = self._capacity_generation
         return True
 
-    def can_retry(self, req_id: str) -> bool:
-        state = self._waiters.get(req_id)
-        return (
-            self.enabled
-            and state is not None
-            and state.failed_capacity_generation != self._capacity_generation
-        )
-
     def claim_oldest_retry(self) -> Optional[str]:
         """Claim at most one retry for the oldest waiter."""
         req_id = self.oldest_req_id
@@ -165,10 +157,11 @@ class L2PrefetchAdmission:
         return req_id
 
     def cancel(self, req_id: str) -> bool:
+        was_oldest = self.oldest_req_id == req_id
         removed = self._waiters.pop(req_id, None) is not None
-        if removed and self._waiters:
+        if removed and self._waiters and was_oldest:
             self._advance_capacity_generation()
-        elif removed:
+        elif removed and not self._waiters:
             self._oldest_retry_requested = False
         return removed
 
@@ -234,7 +227,7 @@ class L2PrefetchAdmission:
             n_release=n_release,
             log_metrics=True,
         )
-        if n_revoke > 0 or n_release > 0:
+        if n_revoke > 0 or n_backup > 0 or n_release > 0:
             self.capacity_changed(synchronized=True)
         return expired
 

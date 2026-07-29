@@ -61,6 +61,7 @@ class TestSchedulerL2PrefetchRetry(unittest.TestCase):
             source.index("self._retry_oldest_l2_prefetch()"),
             source.index("running_batch.batch_is_full or"),
         )
+        self.assertNotIn("l2_admission.can_retry", source)
 
 
 if __name__ == "__main__":

@@ -234,16 +234,16 @@ class TestL2PrefetchAdmissionState(unittest.TestCase):
 
         self.assertFalse(admission.enqueue("req"))
         self.assertFalse(admission.is_waiting("req"))
-        self.assertFalse(admission.can_retry("req"))
+        self.assertIsNone(admission.claim_oldest_retry())
 
-    def test_waiting_cohort_retries_in_scheduler_order(self):
+    def test_capacity_change_requests_one_retry_for_oldest(self):
         admission = L2PrefetchAdmission(_enabled_config())
         admission.enqueue("first")
         admission.enqueue("second")
         admission.capacity_changed(synchronized=True)
 
-        self.assertTrue(admission.can_retry("first"))
-        self.assertTrue(admission.can_retry("second"))
+        self.assertEqual(admission.claim_oldest_retry(), "first")
+        self.assertIsNone(admission.claim_oldest_retry())
         self.assertFalse(admission.should_wait_behind_existing("second"))
         self.assertTrue(admission.should_wait_behind_existing("new"))
 
@@ -256,7 +256,6 @@ class TestL2PrefetchAdmissionState(unittest.TestCase):
 
         self.assertEqual(admission.claim_oldest_retry(), "first")
         self.assertIsNone(admission.claim_oldest_retry())
-        self.assertFalse(admission.can_retry("second"))
 
     def test_new_waiters_coalesce_oldest_retry_request(self):
         admission = L2PrefetchAdmission(_enabled_config())
@@ -293,13 +292,13 @@ class TestL2PrefetchAdmissionState(unittest.TestCase):
         admission = L2PrefetchAdmission(_enabled_config())
         admission.enqueue("first")
         admission.capacity_changed(synchronized=True)
-        self.assertTrue(admission.can_retry("first"))
+        self.assertEqual(admission.claim_oldest_retry(), "first")
 
         admission.enqueue("first")
 
-        self.assertFalse(admission.can_retry("first"))
+        self.assertIsNone(admission.claim_oldest_retry())
         admission.capacity_changed(synchronized=True)
-        self.assertTrue(admission.can_retry("first"))
+        self.assertEqual(admission.claim_oldest_retry(), "first")
 
     def test_removing_oldest_wakes_next_waiter(self):
         admission = L2PrefetchAdmission(_enabled_config())
@@ -308,7 +307,17 @@ class TestL2PrefetchAdmissionState(unittest.TestCase):
 
         admission.cancel("first")
 
-        self.assertTrue(admission.can_retry("second"))
+        self.assertEqual(admission.claim_oldest_retry(), "second")
+
+    def test_removing_non_oldest_does_not_wake_oldest(self):
+        admission = L2PrefetchAdmission(_enabled_config())
+        admission.enqueue("first")
+        admission.enqueue("second")
+        self.assertEqual(admission.claim_oldest_retry(), "first")
+
+        admission.cancel("second")
+
+        self.assertIsNone(admission.claim_oldest_retry())
 
     def test_requeue_preserves_original_timeout(self):
         clock = _Clock()
@@ -329,7 +338,7 @@ class TestL2PrefetchAdmissionState(unittest.TestCase):
         clock.advance(6)
 
         self.assertEqual(admission.expire_oldest(), ("first", 6.0))
-        self.assertTrue(admission.can_retry("second"))
+        self.assertEqual(admission.claim_oldest_retry(), "second")
 
     def test_configure_clears_waiters_and_applies_capacity_ratio(self):
         controller = _FakeController(_FakeHostPool([], size=200))
@@ -519,11 +528,11 @@ class TestL2PrefetchAdmissionIO(unittest.TestCase):
         admission = L2PrefetchAdmission(_enabled_config())
         admission.enqueue("req")
         admission.capacity_changed()
-        self.assertFalse(admission.can_retry("req"))
+        self.assertIsNone(admission.claim_oldest_retry())
 
         admission.drain_storage_control_queues(cache)
 
-        self.assertTrue(admission.can_retry("req"))
+        self.assertEqual(admission.claim_oldest_retry(), "req")
 
     def test_peer_capacity_change_wakes_local_waiter(self):
         controller = _FakeController(_FakeHostPool([]))
@@ -534,7 +543,7 @@ class TestL2PrefetchAdmissionIO(unittest.TestCase):
 
         admission.drain_storage_control_queues(cache)
 
-        self.assertTrue(admission.can_retry("req"))
+        self.assertEqual(admission.claim_oldest_retry(), "req")
 
     def test_host_release_queue_wakes_waiters_in_same_drain(self):
         controller = _FakeController(_FakeHostPool([]))
@@ -545,8 +554,20 @@ class TestL2PrefetchAdmissionIO(unittest.TestCase):
 
         admission.drain_storage_control_queues(cache)
 
-        self.assertTrue(admission.can_retry("req"))
+        self.assertEqual(admission.claim_oldest_retry(), "req")
         self.assertEqual(cache.drain_calls[0]["n_release"], 1)
+
+    def test_backup_ack_wakes_waiters_after_releasing_host_protection(self):
+        controller = _FakeController(_FakeHostPool([]))
+        controller.ack_backup_queue.put(object())
+        cache = _FakeCache(controller)
+        admission = L2PrefetchAdmission(_enabled_config())
+        admission.enqueue("req")
+
+        admission.drain_storage_control_queues(cache)
+
+        self.assertEqual(admission.claim_oldest_retry(), "req")
+        self.assertEqual(cache.drain_calls[0]["n_backup"], 1)
 
 
 if __name__ == "__main__":

@@ -2928,13 +2928,10 @@ class Scheduler(
             if self.enable_hicache_storage:
                 l2_admission = get_l2_prefetch_admission(self.tree_cache)
                 if l2_admission is not None and l2_admission.is_waiting(req.rid):
-                    if not l2_admission.can_retry(req.rid):
-                        continue
-                    # Waiting does not pin a radix node, so rematch before retry.
-                    if not self._prefetch_kvcache(req):
-                        l2_admission.cancel(req.rid)
-                    if l2_admission.is_waiting(req.rid):
-                        continue
+                    # Admission retries are driven once per scheduler round above.
+                    # Retrying here would fan one capacity change out across the
+                    # entire waiting cohort in a single pass.
+                    continue
 
                 prefetch_done = self.tree_cache.check_prefetch_progress(req.rid)
                 if not prefetch_done:
