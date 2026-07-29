@@ -247,6 +247,48 @@ class TestL2PrefetchAdmissionState(unittest.TestCase):
         self.assertFalse(admission.should_wait_behind_existing("second"))
         self.assertTrue(admission.should_wait_behind_existing("new"))
 
+    def test_new_waiter_requests_one_retry_for_oldest(self):
+        admission = L2PrefetchAdmission(_enabled_config())
+        admission.enqueue("first")
+        self.assertIsNone(admission.claim_oldest_retry())
+
+        admission.enqueue("second")
+
+        self.assertEqual(admission.claim_oldest_retry(), "first")
+        self.assertIsNone(admission.claim_oldest_retry())
+        self.assertFalse(admission.can_retry("second"))
+
+    def test_new_waiters_coalesce_oldest_retry_request(self):
+        admission = L2PrefetchAdmission(_enabled_config())
+        admission.enqueue("first")
+        admission.enqueue("second")
+        admission.enqueue("third")
+
+        self.assertEqual(admission.claim_oldest_retry(), "first")
+        self.assertIsNone(admission.claim_oldest_retry())
+
+    def test_failed_oldest_retry_waits_for_another_new_waiter(self):
+        admission = L2PrefetchAdmission(_enabled_config())
+        admission.enqueue("first")
+        admission.enqueue("second")
+        self.assertEqual(admission.claim_oldest_retry(), "first")
+
+        admission.enqueue("first")
+        self.assertIsNone(admission.claim_oldest_retry())
+
+        admission.enqueue("third")
+        self.assertEqual(admission.claim_oldest_retry(), "first")
+
+    def test_removing_claimed_oldest_wakes_next_waiter(self):
+        admission = L2PrefetchAdmission(_enabled_config())
+        admission.enqueue("first")
+        admission.enqueue("second")
+        self.assertEqual(admission.claim_oldest_retry(), "first")
+
+        admission.cancel("first")
+
+        self.assertEqual(admission.claim_oldest_retry(), "second")
+
     def test_failed_retry_waits_for_next_capacity_generation(self):
         admission = L2PrefetchAdmission(_enabled_config())
         admission.enqueue("first")

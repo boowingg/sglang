@@ -83,6 +83,7 @@ class L2PrefetchAdmission:
         self._waiters: OrderedDict[str, _WaitingPrefetch] = OrderedDict()
         self._capacity_generation = 0
         self._capacity_change_pending = False
+        self._oldest_retry_requested = False
 
     @property
     def enabled(self) -> bool:
@@ -114,6 +115,7 @@ class L2PrefetchAdmission:
         self._waiters.clear()
         self._capacity_generation = 0
         self._capacity_change_pending = False
+        self._oldest_retry_requested = False
 
     def is_waiting(self, req_id: str) -> bool:
         return self.enabled and req_id in self._waiters
@@ -127,10 +129,12 @@ class L2PrefetchAdmission:
 
         state = self._waiters.get(req_id)
         if state is None:
+            had_waiters = bool(self._waiters)
             self._waiters[req_id] = _WaitingPrefetch(
                 enqueued_at=self._clock(),
                 failed_capacity_generation=self._capacity_generation,
             )
+            self._oldest_retry_requested = had_waiters
         else:
             state.failed_capacity_generation = self._capacity_generation
         return True
@@ -143,10 +147,29 @@ class L2PrefetchAdmission:
             and state.failed_capacity_generation != self._capacity_generation
         )
 
+    def claim_oldest_retry(self) -> Optional[str]:
+        """Claim at most one retry for the oldest waiter."""
+        req_id = self.oldest_req_id
+        if not self.enabled or req_id is None:
+            return None
+
+        state = self._waiters[req_id]
+        if (
+            not self._oldest_retry_requested
+            and state.failed_capacity_generation == self._capacity_generation
+        ):
+            return None
+
+        self._oldest_retry_requested = False
+        state.failed_capacity_generation = self._capacity_generation
+        return req_id
+
     def cancel(self, req_id: str) -> bool:
         removed = self._waiters.pop(req_id, None) is not None
         if removed and self._waiters:
             self._advance_capacity_generation()
+        elif removed:
+            self._oldest_retry_requested = False
         return removed
 
     def capacity_changed(self, *, synchronized: bool = False) -> None:
@@ -175,6 +198,8 @@ class L2PrefetchAdmission:
         waited = self._clock() - state.enqueued_at
         if self._waiters:
             self._advance_capacity_generation()
+        else:
+            self._oldest_retry_requested = False
         return oldest_req_id, waited
 
     def drain_storage_control_queues(self, cache: Any) -> Optional[tuple[str, float]]:

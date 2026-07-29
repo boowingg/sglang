@@ -2342,6 +2342,24 @@ class Scheduler(
         else:
             raise ValueError(f"Invalid {self.disaggregation_mode=}")
 
+    def _retry_oldest_l2_prefetch(self) -> None:
+        admission = get_l2_prefetch_admission(self.tree_cache)
+        if admission is None:
+            return
+
+        req_id = admission.claim_oldest_retry()
+        if req_id is None:
+            return
+
+        req = next((req for req in self.waiting_queue if req.rid == req_id), None)
+        if req is None:
+            admission.cancel(req_id)
+            return
+
+        # Waiting requests hold no radix-node lock, so rebuild their match.
+        if not self._prefetch_kvcache(req):
+            admission.cancel(req_id)
+
     def _set_or_validate_priority(self, req: Req) -> bool:
         """Set the default priority value, or abort the request based on the priority scheduling mode."""
         if self.enable_priority_scheduling and req.priority is None:
@@ -2789,6 +2807,12 @@ class Scheduler(
 
         if self.enable_hierarchical_cache or self.server_args.enable_flexkv:
             self.tree_cache.check_hicache_events()
+
+        if (
+            self.enable_hicache_storage
+            and self.disaggregation_mode == DisaggregationMode.NULL
+        ):
+            self._retry_oldest_l2_prefetch()
 
         if self.enable_priority_preemption or self.is_hybrid_swa:
             # Reset batch_is_full to try preemption with a prefill adder.
