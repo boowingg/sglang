@@ -83,6 +83,8 @@ class L2PrefetchAdmission:
         self._waiters: OrderedDict[str, _WaitingPrefetch] = OrderedDict()
         self._capacity_generation = 0
         self._capacity_change_pending = False
+        self._retry_claimed_generation = -1
+        self._retry_claimed_req_id: Optional[str] = None
 
     @property
     def enabled(self) -> bool:
@@ -114,6 +116,8 @@ class L2PrefetchAdmission:
         self._waiters.clear()
         self._capacity_generation = 0
         self._capacity_change_pending = False
+        self._retry_claimed_generation = -1
+        self._retry_claimed_req_id = None
 
     def is_waiting(self, req_id: str) -> bool:
         return self.enabled and req_id in self._waiters
@@ -143,9 +147,25 @@ class L2PrefetchAdmission:
             and state.failed_capacity_generation != self._capacity_generation
         )
 
+    def claim_retry(self, req_id: str) -> bool:
+        """Allow at most one allocation probe per capacity generation."""
+        if (
+            not self.can_retry(req_id)
+            or self._retry_claimed_generation == self._capacity_generation
+        ):
+            return False
+        self._retry_claimed_generation = self._capacity_generation
+        self._retry_claimed_req_id = req_id
+        return True
+
     def cancel(self, req_id: str) -> bool:
+        was_oldest = self.oldest_req_id == req_id
+        was_claimed = (
+            self._retry_claimed_generation == self._capacity_generation
+            and self._retry_claimed_req_id == req_id
+        )
         removed = self._waiters.pop(req_id, None) is not None
-        if removed and self._waiters:
+        if removed and self._waiters and (was_oldest or was_claimed):
             self._advance_capacity_generation()
         return removed
 
@@ -167,17 +187,32 @@ class L2PrefetchAdmission:
             >= self.config.wait_timeout
         )
 
-    def expire_oldest(self) -> Optional[tuple[str, float]]:
-        oldest_req_id = self.oldest_req_id
-        if oldest_req_id is None:
-            return None
-        state = self._waiters.pop(oldest_req_id)
-        waited = self._clock() - state.enqueued_at
-        if self._waiters:
-            self._advance_capacity_generation()
-        return oldest_req_id, waited
+    def expired_prefix_count(self) -> int:
+        now = self._clock()
+        count = 0
+        for state in self._waiters.values():
+            if now - state.enqueued_at < self.config.wait_timeout:
+                break
+            count += 1
+        return count
 
-    def drain_storage_control_queues(self, cache: Any) -> Optional[tuple[str, float]]:
+    def expire_oldest(self) -> Optional[tuple[str, float]]:
+        expired = self.expire_oldest_n(1)
+        if not expired:
+            return None
+        return expired[0]
+
+    def expire_oldest_n(self, count: int) -> list[tuple[str, float]]:
+        now = self._clock()
+        expired = []
+        for _ in range(min(count, len(self._waiters))):
+            req_id, state = self._waiters.popitem(last=False)
+            expired.append((req_id, now - state.enqueued_at))
+        if expired and self._waiters:
+            self._advance_capacity_generation()
+        return expired
+
+    def drain_storage_control_queues(self, cache: Any) -> list[tuple[str, float]]:
         import torch
 
         cc = cache.cache_controller
@@ -186,7 +221,7 @@ class L2PrefetchAdmission:
                 cc.prefetch_revoke_queue.qsize(),
                 cc.ack_backup_queue.qsize(),
                 cc.host_mem_release_queue.qsize(),
-                int(not self.oldest_expired()),
+                -self.expired_prefix_count(),
                 int(not self._capacity_change_pending),
             ],
             dtype=torch.int,
@@ -196,13 +231,13 @@ class L2PrefetchAdmission:
             n_revoke,
             n_backup,
             n_release,
-            oldest_wait_not_expired,
+            negative_expired_count,
             capacity_unchanged,
         ) = map(int, queue_states.tolist())
         self._capacity_change_pending = False
         if not capacity_unchanged:
             self._advance_capacity_generation()
-        expired = None if oldest_wait_not_expired else self.expire_oldest()
+        expired = self.expire_oldest_n(-negative_expired_count)
         cache._drain_storage_control_queues_impl(
             n_revoke=n_revoke,
             n_backup=n_backup,
@@ -216,6 +251,8 @@ class L2PrefetchAdmission:
     def _advance_capacity_generation(self) -> None:
         if self._waiters:
             self._capacity_generation += 1
+            self._retry_claimed_generation = -1
+            self._retry_claimed_req_id = None
 
     def prefetch(
         self,

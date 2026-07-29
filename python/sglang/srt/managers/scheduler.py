@@ -2904,7 +2904,7 @@ class Scheduler(
             if self.enable_hicache_storage:
                 l2_admission = get_l2_prefetch_admission(self.tree_cache)
                 if l2_admission is not None and l2_admission.is_waiting(req.rid):
-                    if not l2_admission.can_retry(req.rid):
+                    if not l2_admission.claim_retry(req.rid):
                         continue
                     # Waiting does not pin a radix node, so rematch before retry.
                     if not self._prefetch_kvcache(req):
