@@ -65,17 +65,19 @@ class L2PrefetchAdmissionConfig:
 
 @dataclass
 class _WaitingPrefetch:
-    # Only the current FIFO head owns a timeout budget.
+    # Set only while this request is the FIFO head; followers do not age out.
     head_since: Optional[float]
+    # Capacity generation observed by this request's most recent failed attempt.
     failed_capacity_generation: int
 
 
 class L2PrefetchAdmission:
-    """Optional FIFO admission queue for L3 prefetches waiting on L2 capacity.
+    """Optional ordered admission wait set for L3 prefetches needing L2 capacity.
 
-    Followers do not age out while blocked behind an older request. Their timeout
-    starts when they become the queue head, so one expired head cannot turn into
-    a cascade of requests that fall back without an admission opportunity.
+    Existing waiters retry in scheduler order after a capacity change, while new
+    arrivals cannot skip that waiting cohort. Followers do not age out behind an
+    older request: timeout starts only when a request becomes the queue head, so
+    one expired head cannot trigger a cascade of immediate fallbacks.
     """
 
     def __init__(
@@ -125,6 +127,8 @@ class L2PrefetchAdmission:
         return self.enabled and req_id in self._waiters
 
     def should_wait_behind_existing(self, req_id: str) -> bool:
+        # Existing waiters retry as one scheduler-ordered cohort. Only a new
+        # arrival must wait behind that cohort.
         return bool(self._waiters) and req_id not in self._waiters
 
     def enqueue(self, req_id: str) -> bool:
@@ -134,11 +138,14 @@ class L2PrefetchAdmission:
         state = self._waiters.get(req_id)
         if state is None:
             is_first = not self._waiters
+            # Starting every follower's timer here would make a long queue expire
+            # as a batch before each request gets a full turn as queue head.
             self._waiters[req_id] = _WaitingPrefetch(
                 head_since=self._clock() if is_first else None,
                 failed_capacity_generation=self._capacity_generation,
             )
         else:
+            # Requeue updates retry state only; a head keeps its original timer.
             state.failed_capacity_generation = self._capacity_generation
         return True
 
@@ -155,6 +162,7 @@ class L2PrefetchAdmission:
         removed = self._waiters.pop(req_id, None) is not None
         if removed and self._waiters:
             if was_oldest:
+                # Hand a fresh timeout budget to the newly promoted head.
                 self._activate_oldest()
             self._advance_capacity_generation()
         return removed
@@ -175,6 +183,8 @@ class L2PrefetchAdmission:
         state = self._waiters[oldest_req_id]
         head_since = state.head_since
         if head_since is None:
+            # Repair the queue invariant defensively instead of expiring a head
+            # that has never owned a timeout budget.
             state.head_since = self._clock()
             return False
         return self._clock() - head_since >= self.config.wait_timeout
@@ -187,6 +197,8 @@ class L2PrefetchAdmission:
         now = self._clock()
         waited = now - (state.head_since if state.head_since is not None else now)
         if self._waiters:
+            # Reuse one timestamp for expiry and promotion so no timeout budget
+            # is lost between the two state transitions.
             self._activate_oldest(now)
             self._advance_capacity_generation()
         return oldest_req_id, waited
@@ -232,6 +244,7 @@ class L2PrefetchAdmission:
             self._capacity_generation += 1
 
     def _activate_oldest(self, now: Optional[float] = None) -> None:
+        """Start the current head's timeout exactly once."""
         oldest_req_id = self.oldest_req_id
         if oldest_req_id is None:
             return
@@ -264,6 +277,8 @@ class L2PrefetchAdmission:
             self.cancel(req_id)
             return
 
+        # New arrivals cannot bypass the current waiting cohort. A block on any
+        # TP rank makes every rank take the same queue path.
         local_blocked = self.should_wait_behind_existing(
             req_id
         ) or self._prefetch_rate_limited(cache.cache_controller)
@@ -286,6 +301,8 @@ class L2PrefetchAdmission:
 
         if host_indices is None:
             last_host_node.release_host()
+            # Keep the request schedulable for a later capacity generation
+            # instead of silently falling back after one failed L2 allocation.
             self.enqueue(req_id)
             return
 
@@ -346,6 +363,8 @@ class L2PrefetchAdmission:
         import torch
 
         host_pool = cache.cache_controller.mem_pool_host
+        # Preserve the original HiCache policy: full allocation first, eviction
+        # second, and a page-aligned partial allocation as the final fallback.
         host_indices = host_pool.alloc(requested_tokens)
         if host_indices is None:
             cache.evict_host(requested_tokens)

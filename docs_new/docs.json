@@ -747,6 +747,7 @@
                   "docs/advanced_features/hicache",
                   "docs/advanced_features/hicache_best_practices",
                   "docs/advanced_features/hicache_design",
+                  "docs/advanced_features/hicache_l2_prefetch_queue_guide_zh",
                   "docs/advanced_features/hicache_storage_runtime_attach_detach"
                 ]
               },

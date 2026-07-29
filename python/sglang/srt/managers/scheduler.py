@@ -2904,6 +2904,8 @@ class Scheduler(
             if self.enable_hicache_storage:
                 l2_admission = get_l2_prefetch_admission(self.tree_cache)
                 if l2_admission is not None and l2_admission.is_waiting(req.rid):
+                    # Retry each waiter at most once per observed L2 capacity
+                    # generation instead of spinning on every scheduler pass.
                     if not l2_admission.can_retry(req.rid):
                         continue
                     # Waiting does not pin a radix node, so rematch before retry.
